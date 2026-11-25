@@ -41,6 +41,7 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
   bool _loading = true;
   bool _busy = false;
   bool _hasServerUrl = false;
+  bool _onBreak = false;
 
   RideRequestPayload? _incomingRequest;
   RideRequestPayload? _activeRide;
@@ -429,6 +430,36 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
         activeRideId: _activeRide?.rideId,
       );
     });
+  }
+
+  Future<void> _sendQuickMessage(String phone, String text) async {
+    if (phone.trim().isEmpty) {
+      await Clipboard.setData(ClipboardData(text: text));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تم نسخ الرسالة السريعة: $text')),
+        );
+      }
+      return;
+    }
+    final uri = Uri(
+      scheme: 'sms',
+      path: phone.trim(),
+      queryParameters: {'body': text},
+    );
+    await launchUrl(uri);
+  }
+
+  Future<void> _toggleBreak(bool enterBreak) async {
+    if (enterBreak) {
+      if (_profile.isOnline) {
+        await _toggleOnline(false);
+      }
+      if (mounted) setState(() => _onBreak = true);
+    } else {
+      if (mounted) setState(() => _onBreak = false);
+      await _toggleOnline(true);
+    }
   }
 
   Future<void> _contactCustomer(String scheme, String phone) async {
@@ -848,12 +879,45 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
                 ),
               ),
               const SizedBox(height: 10),
+              if (_onBreak)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE56A2B).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.coffee_outlined, color: Color(0xFFE56A2B)),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'أنت في استراحة مؤقتة حالياً',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _busy ? null : () => _toggleBreak(false),
+                        child: const Text('إنهاء الاستراحة'),
+                      ),
+                    ],
+                  ),
+                ),
               Text(
                 _profile.isOnline
                     ? 'أنت متاح الآن؛ ستصلك إشعارات الطلبات القريبة فورياً.'
                     : 'اضغط على «غير متاح» بالأعلى لتفعيل استقبال الطلبات.',
                 style: TextStyle(fontSize: 13, color: secondaryText),
               ),
+              if (_profile.isOnline && !_onBreak) ...[
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : () => _toggleBreak(true),
+                  icon: const Icon(Icons.coffee_outlined, size: 18),
+                  label: const Text('أخذ استراحة مؤقتة'),
+                ),
+              ],
               if (_profile.isOnline && !_hasServerUrl) ...[
                 const SizedBox(height: 10),
                 FilledButton.icon(
@@ -1229,7 +1293,29 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
                 ),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final msg in const [
+                    'أنا في الطريق إليك',
+                    'وصلت عند نقطة الانطلاق',
+                    'أنتظرك لمدة دقائق',
+                  ])
+                    Padding(
+                      padding: const EdgeInsetsDirectional.only(end: 6),
+                      child: ActionChip(
+                        avatar: const Icon(Icons.bolt_rounded, size: 16),
+                        label: Text(msg, style: const TextStyle(fontSize: 12)),
+                        onPressed: () =>
+                            _sendQuickMessage(ride.passengerPhone, msg),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
             Row(
               children: [
                 if (RideStateMachine.canTransition(
@@ -1616,7 +1702,9 @@ class _CaptainHistoryPageState extends State<CaptainHistoryPage> {
     final now = DateTime.now();
     final cutoff = _period == 'today'
         ? DateTime(now.year, now.month, now.day)
-        : now.subtract(const Duration(days: 7));
+        : _period == 'week'
+            ? now.subtract(const Duration(days: 7))
+            : now.subtract(const Duration(days: 30));
     return _trips.where((t) {
       final dt = DateTime.tryParse((t['date'] ?? '').toString());
       return dt != null && !dt.isBefore(cutoff);
@@ -1644,9 +1732,28 @@ class _CaptainHistoryPageState extends State<CaptainHistoryPage> {
           : ListView(
               padding: const EdgeInsets.all(18),
               children: [
+                if (_profile.carModel.isNotEmpty || _profile.plateNumber.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.directions_car_filled, color: _captainGreen),
+                        title: Text(
+                          '${_profile.carColor} ${_profile.carModel}'.trim(),
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Text('لوحة: ${_profile.plateNumber.isEmpty ? 'غير محددة' : _profile.plateNumber}'),
+                        trailing: Text(
+                          '★ ${_profile.rating.toStringAsFixed(1)}',
+                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                        ),
+                      ),
+                    ),
+                  ),
                 SegmentedButton<String>(
                   segments: const [
                     ButtonSegment(value: 'all', label: Text('الكل')),
+                    ButtonSegment(value: 'month', label: Text('شهر')),
                     ButtonSegment(value: 'week', label: Text('7 أيام')),
                     ButtonSegment(value: 'today', label: Text('اليوم')),
                   ],

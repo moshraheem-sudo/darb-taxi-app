@@ -1,7 +1,9 @@
 import 'package:car/main.dart';
 import 'package:car/models/ride_models.dart';
 import 'package:car/pages/captain_pages.dart';
+import 'package:car/pages/safety_page.dart';
 import 'package:car/services/ride_backend_service.dart';
+import 'package:car/widgets/darb_components.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -416,5 +418,44 @@ void main() {
       ),
       throwsA(isA<StateError>()),
     );
+  });
+
+  testWidgets('safety center renders Emergency SOS and trusted contacts empty state', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Directionality(
+          textDirection: TextDirection.rtl,
+          child: SafetyCenterPage(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('نداء الطوارئ السريع (SOS)'), findsOneWidget);
+    expect(find.text('لا توجد جهات اتصال موثوقة'), findsOneWidget);
+  });
+
+  testWidgets('DarbStateView renders empty and offline states', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              DarbStateView.empty(
+                icon: Icons.inbox_outlined,
+                title: 'فارغ',
+              ),
+              DarbStateView.offline(),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.text('فارغ'), findsOneWidget);
+    expect(find.text('لا يوجد اتصال بالإنترنت'), findsOneWidget);
   });
 }

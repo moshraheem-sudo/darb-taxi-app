@@ -15,6 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'models/ride_models.dart';
 import 'pages/captain_pages.dart';
+import 'pages/safety_page.dart';
 import 'services/notification_center.dart';
 import 'services/passenger_api.dart';
 import 'services/ride_backend_service.dart';
@@ -701,6 +702,10 @@ final router = GoRouter(
       builder: (context, state) => const NotificationCenterPage(),
     ),
     GoRoute(
+      path: '/safety',
+      builder: (context, state) => const SafetyCenterPage(),
+    ),
+    GoRoute(
       path: '/login',
       builder: (context, state) => const PassengerLoginPage(),
     ),
@@ -731,6 +736,10 @@ class RideApp extends StatefulWidget {
   State<RideApp> createState() => _RideAppState();
 }
 
+final ValueNotifier<Locale> appLocale = ValueNotifier<Locale>(
+  const Locale('ar'),
+);
+
 class _RideAppState extends State<RideApp> {
   @override
   void initState() {
@@ -741,6 +750,8 @@ class _RideAppState extends State<RideApp> {
       );
       passengerLoggedIn.value =
           preferences.getBool('passenger_logged_in') ?? false;
+      final lang = preferences.getString('darb_locale') ?? 'ar';
+      appLocale.value = Locale(lang == 'en' ? 'en' : 'ar');
     });
   }
 
@@ -750,27 +761,32 @@ class _RideAppState extends State<RideApp> {
     child: Builder(
       builder: (context) {
         final dark = context.watch<RideCubit>().state.dark;
-        return ValueListenableBuilder<bool>(
-          valueListenable: passengerLoggedIn,
-          builder: (context, loggedIn, _) {
-            return MaterialApp.router(
-              debugShowCheckedModeBanner: false,
-              routerConfig: router,
-              themeMode: dark ? ThemeMode.dark : ThemeMode.light,
-              theme: _theme(false),
-              darkTheme: _theme(true),
-              builder: (context, child) => Directionality(
-                textDirection: TextDirection.rtl,
-                child: loggedIn
-                    ? (child ?? const SizedBox.shrink())
-                    : Navigator(
-                        onGenerateRoute: (_) => MaterialPageRoute<void>(
-                          builder: (_) => const PassengerLoginPage(),
+        return ValueListenableBuilder<Locale>(
+          valueListenable: appLocale,
+          builder: (context, locale, _) => ValueListenableBuilder<bool>(
+            valueListenable: passengerLoggedIn,
+            builder: (context, loggedIn, _) {
+              return MaterialApp.router(
+                debugShowCheckedModeBanner: false,
+                routerConfig: router,
+                themeMode: dark ? ThemeMode.dark : ThemeMode.light,
+                theme: _theme(false),
+                darkTheme: _theme(true),
+                builder: (context, child) => Directionality(
+                  textDirection: locale.languageCode == 'en'
+                      ? TextDirection.ltr
+                      : TextDirection.rtl,
+                  child: loggedIn
+                      ? (child ?? const SizedBox.shrink())
+                      : Navigator(
+                          onGenerateRoute: (_) => MaterialPageRoute<void>(
+                            builder: (_) => const PassengerLoginPage(),
+                          ),
                         ),
-                      ),
-              ),
-            );
-          },
+                ),
+              );
+            },
+          ),
         );
       },
     ),
@@ -3197,6 +3213,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       onPressed: () => _shareActiveRideDetails(state),
                       icon: const Icon(Icons.share_outlined),
                     ),
+                    IconButton.filledTonal(
+                      tooltip: 'الطوارئ (SOS)',
+                      onPressed: () => context.push('/safety'),
+                      icon: const Icon(
+                        Icons.emergency_outlined,
+                        color: Colors.redAccent,
+                      ),
+                    ),
                   ],
                 ),
               ],
@@ -4003,6 +4027,11 @@ class _ProfilePageState extends State<ProfilePage> {
           onTap: () => context.push('/favorites'),
         ),
         _MenuTile(
+          icon: Icons.shield_outlined,
+          title: 'الأمان والطوارئ (SOS)',
+          onTap: () => context.push('/safety'),
+        ),
+        _MenuTile(
           icon: Icons.support_agent,
           title: 'المساعدة والشكاوى',
           onTap: () => context.push('/support'),
@@ -4309,6 +4338,38 @@ class _SettingsPageState extends State<SettingsPage> {
           secondary: const Icon(Icons.dark_mode_outlined),
           title: const Text('الوضع الليلي'),
         ),
+        ValueListenableBuilder<Locale>(
+          valueListenable: appLocale,
+          builder: (context, locale, _) => Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'لغة التطبيق واتجاه الواجهة',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 10),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'ar', label: Text('العربية (RTL)')),
+                      ButtonSegment(value: 'en', label: Text('English (LTR)')),
+                    ],
+                    selected: {locale.languageCode},
+                    onSelectionChanged: (s) async {
+                      final code = s.first;
+                      appLocale.value = Locale(code);
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setString('darb_locale', code);
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(14),
