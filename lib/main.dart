@@ -4585,6 +4585,16 @@ class _SettingsPageState extends State<SettingsPage> {
             'جلسة الدخول آمنة؛ والوجهات المفضلة محفوظة محلياً على جهازك.',
           ),
         ),
+        if (currentUserRole.value == UserRole.captain) ...[
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.directions_car_outlined, color: green),
+            title: const Text('إدارة بيانات السيارة والمستمسكات'),
+            subtitle: const Text('إكمال معلومات المركبة والصورة الشخصية والوثائق'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/captain/onboarding'),
+          ),
+        ],
         ],
       ),
     ),
@@ -4780,6 +4790,14 @@ class _PassengerLoginPageState extends State<PassengerLoginPage> {
       await prefs.setBool('passenger_logged_in', true);
       currentUserRole.value = _selectedRole;
       passengerLoggedIn.value = true;
+      if (_selectedRole == UserRole.captain) {
+        final captainProfile = await _backend.loadCaptainProfile();
+        if (!captainProfile.hasRequiredInfo || !captainProfile.hasProfilePhoto) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            router.push('/captain/onboarding');
+          });
+        }
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم التحقق من الحساب بنجاح.')),

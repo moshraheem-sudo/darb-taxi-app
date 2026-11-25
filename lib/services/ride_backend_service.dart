@@ -654,6 +654,66 @@ class RideBackendService
     return createRideRequest(demo);
   }
 
+  /// Generates 3 nearby demo requests at varying distances and exact IQD fares
+  /// so the captain can compare and pick the closest/preferred customer.
+  Future<List<RideRequestPayload>> triggerMultipleLocalDemoRequests(
+    LatLng nearPoint,
+  ) async {
+    final now = DateTime.now();
+    final samples = <RideRequestPayload>[
+      RideRequestPayload(
+        rideId: 'demo_${now.millisecondsSinceEpoch}_1',
+        passengerName: 'علي حسين',
+        passengerPhone: '+9647711112233',
+        originLat: nearPoint.latitude + 0.0035,
+        originLng: nearPoint.longitude + 0.0025,
+        originName: 'الكوت، حي الزهراء (قريب جداً)',
+        destinationLat: nearPoint.latitude + 0.015,
+        destinationLng: nearPoint.longitude + 0.014,
+        destinationName: 'الكوت، شارع الضفاف',
+        fareIqd: 1500,
+        distanceKm: 2.1,
+        durationMin: 6,
+        createdAt: now,
+      ),
+      RideRequestPayload(
+        rideId: 'demo_${now.millisecondsSinceEpoch}_2',
+        passengerName: 'زهراء محمد',
+        passengerPhone: '+9647802223344',
+        originLat: nearPoint.latitude + 0.011,
+        originLng: nearPoint.longitude - 0.008,
+        originName: 'الكوت، حي الكفاءات',
+        destinationLat: nearPoint.latitude + 0.032,
+        destinationLng: nearPoint.longitude + 0.019,
+        destinationName: 'جامعة واسط',
+        fareIqd: 3000,
+        distanceKm: 4.8,
+        durationMin: 12,
+        createdAt: now,
+      ),
+      RideRequestPayload(
+        rideId: 'demo_${now.millisecondsSinceEpoch}_3',
+        passengerName: 'مصطفى جاسم',
+        passengerPhone: '+9647723334455',
+        originLat: nearPoint.latitude - 0.018,
+        originLng: nearPoint.longitude + 0.015,
+        originName: 'الكوت، المشروع',
+        destinationLat: nearPoint.latitude + 0.025,
+        destinationLng: nearPoint.longitude - 0.020,
+        destinationName: 'سدة الكوت',
+        fareIqd: 4500,
+        distanceKm: 7.4,
+        durationMin: 17,
+        createdAt: now,
+      ),
+    ];
+    final created = <RideRequestPayload>[];
+    for (final req in samples) {
+      created.add(await createRideRequest(req));
+    }
+    return created;
+  }
+
   @override
   Future<RideRequestPayload> updateRideStatus({
     required RideRequestPayload request,

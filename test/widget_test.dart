@@ -857,6 +857,14 @@ void main() {
     expect(find.text('موقع مشترك'), findsOneWidget);
     expect(find.text('32.520745, 45.801720'), findsOneWidget);
   });
+
+  test('RideBackendService triggerMultipleLocalDemoRequests generates 3 priced requests', () async {
+    SharedPreferences.setMockInitialValues({});
+    final created = await RideBackendService.instance
+        .triggerMultipleLocalDemoRequests(const LatLng(32.5050, 45.8230));
+    expect(created, hasLength(3));
+    expect(created.map((e) => e.fareIqd).toList(), [1500, 3000, 4500]);
+  });
 }
 
 class _FakeRedirectAdapter implements HttpClientAdapter {

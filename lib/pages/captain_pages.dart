@@ -63,7 +63,14 @@ class _CaptainHomePageState extends State<CaptainHomePage>
   bool _hasServerUrl = false;
   bool _onBreak = false;
 
-  RideRequestPayload? _incomingRequest;
+  List<RideRequestPayload> _incomingRequests = const [];
+  int _selectedIncomingIndex = 0;
+  RideRequestPayload? get _incomingRequest =>
+      (_incomingRequests.isNotEmpty &&
+              _selectedIncomingIndex >= 0 &&
+              _selectedIncomingIndex < _incomingRequests.length)
+          ? _incomingRequests[_selectedIncomingIndex]
+          : null;
   RideRequestPayload? _activeRide;
   List<LatLng> _routePoints = const [];
   List<CaptainRouteOption> _routeOptions = const [];
@@ -140,7 +147,8 @@ class _CaptainHomePageState extends State<CaptainHomePage>
       if (pendingLocal != null) {
         if (pendingLocal.status == RideDispatchStatus.searching &&
             profile.isOnline) {
-          _incomingRequest = pendingLocal;
+          _incomingRequests = [pendingLocal];
+          _selectedIncomingIndex = 0;
         } else if (pendingLocal.captainId == profile.id &&
             pendingLocal.status != RideDispatchStatus.completed &&
             pendingLocal.status != RideDispatchStatus.cancelled) {
@@ -159,9 +167,20 @@ class _CaptainHomePageState extends State<CaptainHomePage>
     _reqSub = _backend.incomingRequests.listen((req) {
       if (!mounted || !_profile.isOnline || _activeRide != null) return;
       if (_profile.approvalStatus != CaptainApprovalStatus.approved) return;
-      setState(() => _incomingRequest = req);
+      setState(() {
+        final next = List<RideRequestPayload>.from(_incomingRequests)
+          ..removeWhere((r) => r.rideId == req.rideId)
+          ..add(req);
+        next.sort(
+          (a, b) => _distanceKmTo(a).compareTo(_distanceKmTo(b)),
+        );
+        _incomingRequests = next;
+        _selectedIncomingIndex = 0;
+      });
       _startRequestCountdown();
-      _loadRouteForRide(req);
+      if (_incomingRequest != null) {
+        _loadRouteForRide(_incomingRequest!);
+      }
       SystemSound.play(SystemSoundType.alert);
       HapticFeedback.heavyImpact();
       NotificationCenterService.addCaptainAlert(
@@ -172,11 +191,19 @@ class _CaptainHomePageState extends State<CaptainHomePage>
 
     _claimedSub = _backend.claimedRideIds.listen((rideId) {
       if (!mounted) return;
-      if (_incomingRequest?.rideId == rideId && _activeRide?.rideId != rideId) {
-        _requestCountdownTimer?.cancel();
+      if (_incomingRequests.any((r) => r.rideId == rideId) &&
+          _activeRide?.rideId != rideId) {
         setState(() {
-          _incomingRequest = null;
-          _routePoints = const [];
+          _incomingRequests = _incomingRequests
+              .where((r) => r.rideId != rideId)
+              .toList();
+          if (_selectedIncomingIndex >= _incomingRequests.length) {
+            _selectedIncomingIndex = 0;
+          }
+          if (_incomingRequests.isEmpty) {
+            _requestCountdownTimer?.cancel();
+            _routePoints = const [];
+          }
         });
       }
     });
@@ -512,13 +539,21 @@ class _CaptainHomePageState extends State<CaptainHomePage>
         if (mounted &&
             pending != null &&
             pending.status == RideDispatchStatus.searching) {
-          setState(() => _incomingRequest = pending);
+          setState(() {
+            _incomingRequests = [pending];
+            _selectedIncomingIndex = 0;
+          });
           _loadRouteForRide(pending);
         }
       } else {
         await _gpsSub?.cancel();
         _backend.disconnectRealtime();
-        if (mounted) setState(() => _incomingRequest = null);
+        if (mounted) {
+          setState(() {
+            _incomingRequests = const [];
+            _selectedIncomingIndex = 0;
+          });
+        }
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -549,11 +584,17 @@ class _CaptainHomePageState extends State<CaptainHomePage>
     );
   }
 
+  double _distanceKmTo(RideRequestPayload req) =>
+      _locationService.distanceKm(
+        _captainPosition,
+        LatLng(req.originLat, req.originLng),
+      );
+
   void _startRequestCountdown() {
     _requestCountdownTimer?.cancel();
     if (mounted) setState(() => _requestCountdown = 30);
     _requestCountdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted || _incomingRequest == null) {
+      if (!mounted || _incomingRequests.isEmpty) {
         t.cancel();
         return;
       }
@@ -566,9 +607,9 @@ class _CaptainHomePageState extends State<CaptainHomePage>
     });
   }
 
-  Future<void> _acceptIncoming() async {
+  Future<void> _acceptIncoming([RideRequestPayload? specific]) async {
     _requestCountdownTimer?.cancel();
-    final req = _incomingRequest;
+    final req = specific ?? _incomingRequest;
     if (req == null) return;
     setState(() => _busy = true);
     try {
@@ -578,14 +619,20 @@ class _CaptainHomePageState extends State<CaptainHomePage>
       );
       if (!mounted) return;
       setState(() {
-        _incomingRequest = null;
+        _incomingRequests = const [];
+        _selectedIncomingIndex = 0;
         _activeRide = accepted;
       });
       await _loadRouteForRide(accepted);
       if (!_hasServerUrl) _startSimulatedMove();
     } on RideConflictException catch (e) {
       if (mounted) {
-        setState(() => _incomingRequest = null);
+        setState(() {
+          _incomingRequests = _incomingRequests
+              .where((r) => r.rideId != req.rideId)
+              .toList();
+          _selectedIncomingIndex = 0;
+        });
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(e.message)));
@@ -601,16 +648,26 @@ class _CaptainHomePageState extends State<CaptainHomePage>
     }
   }
 
-  Future<void> _rejectIncoming() async {
-    _requestCountdownTimer?.cancel();
-    final req = _incomingRequest;
+  Future<void> _rejectIncoming([RideRequestPayload? specific]) async {
+    final req = specific ?? _incomingRequest;
     if (req == null) return;
     await _backend.rejectRide(rideId: req.rideId, captainId: _profile.id);
     if (mounted) {
       setState(() {
-        _incomingRequest = null;
-        _routePoints = const [];
+        _incomingRequests = _incomingRequests
+            .where((r) => r.rideId != req.rideId)
+            .toList();
+        if (_selectedIncomingIndex >= _incomingRequests.length) {
+          _selectedIncomingIndex = 0;
+        }
+        if (_incomingRequests.isEmpty) {
+          _requestCountdownTimer?.cancel();
+          _routePoints = const [];
+        }
       });
+      if (_incomingRequest != null) {
+        _loadRouteForRide(_incomingRequest!);
+      }
     }
   }
 
@@ -1345,9 +1402,8 @@ class _CaptainHomePageState extends State<CaptainHomePage>
                     primaryText,
                     secondaryText,
                   )
-                else if (_incomingRequest != null)
-                  _buildIncomingRequestCard(
-                    _incomingRequest!,
+                else if (_incomingRequests.isNotEmpty)
+                  _buildIncomingRequestsQueue(
                     surface,
                     primaryText,
                     secondaryText,
@@ -1422,17 +1478,9 @@ class _CaptainHomePageState extends State<CaptainHomePage>
                     ],
                   ),
                 ),
-                Text(
-                  formatIraqiDinar(_profile.totalEarnings),
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 15,
-                    color: primaryText,
-                  ),
-                ),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             if (!approved) ...[
               FilledButton.icon(
                 onPressed: () async {
@@ -1456,43 +1504,6 @@ class _CaptainHomePageState extends State<CaptainHomePage>
                 ),
               ],
             ] else ...[
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: _captainGreen.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    Text(
-                      '★ ${_profile.rating.toStringAsFixed(1)}',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12.5,
-                        color: primaryText,
-                      ),
-                    ),
-                    Text(
-                      '${_profile.totalTrips} رحلة',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12.5,
-                        color: primaryText,
-                      ),
-                    ),
-                    Text(
-                      formatIraqiDinar(_profile.totalEarnings),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12.5,
-                        color: _captainGreen,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
               if (_onBreak)
                 Container(
                   margin: const EdgeInsets.only(bottom: 10),
@@ -1537,27 +1548,17 @@ class _CaptainHomePageState extends State<CaptainHomePage>
                 FilledButton.icon(
                   onPressed: _busy
                       ? null
-                      : () => _backend.triggerLocalDemoRequest(
+                      : () => _backend.triggerMultipleLocalDemoRequests(
                           _captainPosition,
                         ),
                   icon: const Icon(Icons.notifications_active_outlined),
-                  label: const Text('محاكاة طلب زبون تجريبي (محلي)'),
+                  label: const Text('محاكاة طلبات زبائن قريبة (تجريبي)'),
                   style: FilledButton.styleFrom(
                     backgroundColor: _captainBlue,
                     minimumSize: const Size.fromHeight(46),
                   ),
                 ),
               ],
-              const SizedBox(height: 10),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  await context.push('/captain/onboarding');
-                  final refreshed = await _backend.loadCaptainProfile();
-                  if (mounted) setState(() => _profile = refreshed);
-                },
-                icon: const Icon(Icons.edit_document),
-                label: const Text('إدارة بيانات السيارة والمستمسكات'),
-              ),
             ],
           ],
         ),
@@ -1565,14 +1566,13 @@ class _CaptainHomePageState extends State<CaptainHomePage>
     );
   }
 
-  Widget _buildIncomingRequestCard(
-    RideRequestPayload req,
+  Widget _buildIncomingRequestsQueue(
     Color surface,
     Color primaryText,
     Color secondaryText,
   ) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 20),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       decoration: BoxDecoration(
         color: surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
@@ -1587,29 +1587,20 @@ class _CaptainHomePageState extends State<CaptainHomePage>
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _captainBlue.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Text(
-                    'طلب رحلة جديد',
+                const Icon(Icons.near_me_rounded, color: _captainBlue, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'طلبات الزبائن القريبة (${_incomingRequests.length})',
                     style: TextStyle(
-                      color: _captainBlue,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w900,
+                      color: primaryText,
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: (_requestCountdown <= 10
                             ? Colors.redAccent
@@ -1628,86 +1619,126 @@ class _CaptainHomePageState extends State<CaptainHomePage>
                     ),
                   ),
                 ),
-                const Spacer(),
-                Text(
-                  formatIraqiDinar(req.fareIqd),
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                    color: primaryText,
-                  ),
-                ),
               ],
-            ),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: _requestCountdown / 30,
-                minHeight: 4,
-                backgroundColor: secondaryText.withValues(alpha: 0.15),
-                color: _requestCountdown <= 10 ? Colors.redAccent : _captainBlue,
-              ),
             ),
             const SizedBox(height: 10),
-            Text(
-              'الزبون: ${req.passengerName}',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-                color: primaryText,
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 280),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: _incomingRequests.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 10),
+                itemBuilder: (context, idx) {
+                  final req = _incomingRequests[idx];
+                  final selected = idx == _selectedIncomingIndex;
+                  final awayKm = _distanceKmTo(req);
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () {
+                      setState(() => _selectedIncomingIndex = idx);
+                      _loadRouteForRide(req);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? _captainBlue.withValues(alpha: 0.08)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: selected
+                              ? _captainBlue
+                              : Colors.grey.withValues(alpha: 0.35),
+                          width: selected ? 1.8 : 1,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  req.passengerName,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 14.5,
+                                    color: primaryText,
+                                  ),
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _captainGreen.withValues(alpha: 0.14),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  formatIraqiDinar(req.fareIqd),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 13.5,
+                                    color: _captainGreen,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'يبعد عنك ${awayKm.toStringAsFixed(1)} كم • مسافة الرحلة ${req.distanceKm.toStringAsFixed(1)} كم',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: _captainBlue,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'من: ${req.originName}\nإلى: ${req.destinationName}',
+                            style: TextStyle(fontSize: 12, color: secondaryText),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed:
+                                      _busy ? null : () => _rejectIncoming(req),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.redAccent,
+                                    minimumSize: const Size.fromHeight(40),
+                                  ),
+                                  child: const Text('تجاهل'),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 2,
+                                child: FilledButton(
+                                  onPressed:
+                                      _busy ? null : () => _acceptIncoming(req),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: _captainGreen,
+                                    minimumSize: const Size.fromHeight(40),
+                                  ),
+                                  child: const Text(
+                                    'قبول الرحلة',
+                                    style: TextStyle(fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'الانطلاق: ${req.originName}',
-              style: TextStyle(fontSize: 13, color: secondaryText),
-            ),
-            Text(
-              'الوصول: ${req.destinationName}',
-              style: TextStyle(fontSize: 13, color: secondaryText),
-            ),
-            if (req.distanceKm > 0)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  'المسافة: ${req.distanceKm.toStringAsFixed(1)} كم • ${req.durationMin.round()} دقيقة',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: _captainGreen,
-                  ),
-                ),
-              ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _busy ? null : _rejectIncoming,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.redAccent,
-                      minimumSize: const Size.fromHeight(48),
-                    ),
-                    child: const Text('رفض'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: FilledButton(
-                    onPressed: _busy ? null : _acceptIncoming,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _captainGreen,
-                      minimumSize: const Size.fromHeight(48),
-                    ),
-                    child: const Text(
-                      'قبول الطلب',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-              ],
             ),
           ],
         ),
@@ -1789,85 +1820,119 @@ class _CaptainHomePageState extends State<CaptainHomePage>
                 ),
               )
             else
-              SizedBox(
-                height: 98,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: _routeOptions.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 10),
-                  itemBuilder: (context, idx) {
-                    final opt = _routeOptions[idx];
-                    final selected = idx == _selectedRouteIndex;
-                    final color = _routeColorForIndex(idx);
-                    return InkWell(
-                      borderRadius: BorderRadius.circular(16),
-                      onTap: () {
-                        setState(() {
-                          _selectedRouteIndex = idx;
-                          _routePoints = opt.points;
-                        });
-                        _fitPoints(opt.points);
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        width: 158,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: selected
-                              ? color.withValues(alpha: 0.12)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: selected ? color : Colors.grey.shade300,
-                            width: selected ? 2 : 1,
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Container(
+              Row(
+                children: [
+                  for (var idx = 0; idx < _routeOptions.length; idx++) ...[
+                    if (idx > 0) const SizedBox(width: 8),
+                    Expanded(
+                      child: Builder(
+                        builder: (context) {
+                          final opt = _routeOptions[idx];
+                          final selected = idx == _selectedRouteIndex;
+                          final eta = DateTime.now().add(
+                            Duration(minutes: opt.durationMin.ceil()),
+                          );
+                          final hour12 = eta.hour % 12 == 0 ? 12 : eta.hour % 12;
+                          final amPm = eta.hour >= 12 ? 'PM' : 'AM';
+                          final etaText =
+                              'تصل $hour12:${eta.minute.toString().padLeft(2, '0')} $amPm';
+                          return InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: () {
+                              setState(() {
+                                _selectedRouteIndex = idx;
+                                _routePoints = opt.points;
+                              });
+                              _fitPoints(opt.points);
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
-                                vertical: 2,
+                                vertical: 10,
                               ),
                               decoration: BoxDecoration(
-                                color: color.withValues(alpha: 0.14),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                opt.badgeLabel,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w800,
-                                  color: color,
+                                color: selected ? _captainGreen : surface,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: selected
+                                      ? _captainGreen
+                                      : Colors.grey.withValues(alpha: 0.3),
+                                  width: selected ? 2 : 1,
                                 ),
                               ),
-                            ),
-                            Text(
-                              '${opt.durationMin.ceil()} دقيقة',
-                              style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w900,
-                                color: primaryText,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  CircleAvatar(
+                                    radius: 13,
+                                    backgroundColor: selected
+                                        ? Colors.white
+                                        : const Color(0xFFB7791F),
+                                    child: Icon(
+                                      selected
+                                          ? Icons.navigation_rounded
+                                          : Icons.u_turn_right_rounded,
+                                      size: 15,
+                                      color: selected
+                                          ? _captainGreen
+                                          : Colors.white,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    opt.badgeLabel,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800,
+                                      color: selected
+                                          ? Colors.white
+                                          : primaryText,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '${opt.durationMin.ceil()} دقيقة',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w900,
+                                      color: selected
+                                          ? Colors.white
+                                          : primaryText,
+                                    ),
+                                  ),
+                                  Text(
+                                    etaText,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      color: selected
+                                          ? Colors.white.withValues(alpha: 0.9)
+                                          : secondaryText,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${opt.distanceKm.toStringAsFixed(1)} كم',
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: selected
+                                          ? Colors.white.withValues(alpha: 0.95)
+                                          : secondaryText,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                            Text(
-                              '${opt.distanceKm.toStringAsFixed(1)} كم',
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                color: secondaryText,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
+                          );
+                        },
                       ),
-                    );
-                  },
-                ),
+                    ),
+                  ],
+                ],
               ),
             const SizedBox(height: 14),
             FilledButton.icon(
@@ -2000,6 +2065,16 @@ class _CaptainHomePageState extends State<CaptainHomePage>
                       fontSize: 12.5,
                       fontWeight: FontWeight.w800,
                       color: _captainBlue,
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _busy ? null : () => _enterRouteSelection(ride),
+                    icon: const Icon(Icons.alt_route_rounded, size: 16),
+                    label: const Text('المسارات'),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                   ),
                   Text(
