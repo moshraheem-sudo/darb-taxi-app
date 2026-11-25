@@ -21,14 +21,19 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     private var incomingLinksSink: EventChannel.EventSink? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
         initialIncomingLink = extractIncomingLink(intent)
+        val safeIntent = sanitizeIntentForFlutter(intent)
+        if (safeIntent !== intent) {
+            setIntent(safeIntent)
+        }
+        super.onCreate(savedInstanceState)
     }
 
     override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
         val incoming = extractIncomingLink(intent)
+        val safeIntent = sanitizeIntentForFlutter(intent) ?: intent
+        super.onNewIntent(safeIntent)
+        setIntent(safeIntent)
         if (!incoming.isNullOrBlank()) {
             if (incomingLinksSink != null) {
                 incomingLinksSink?.success(incoming)
@@ -36,6 +41,20 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
                 initialIncomingLink = incoming
             }
         }
+    }
+
+    private fun sanitizeIntentForFlutter(sourceIntent: Intent?): Intent? {
+        if (sourceIntent == null) return null
+        val scheme = sourceIntent.data?.scheme?.lowercase()
+        if (sourceIntent.action == Intent.ACTION_VIEW &&
+            (scheme == "geo" || scheme == "darb")
+        ) {
+            return Intent(sourceIntent).apply {
+                action = Intent.ACTION_MAIN
+                data = null
+            }
+        }
+        return sourceIntent
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

@@ -188,35 +188,41 @@ class MapLinkParserService {
 
   static ParsedMapLocation? _parseGeoUri(String rawUrl) {
     final match = RegExp(
-      r'^geo:(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?:;[^\?]*)?(?:\?(.*))?$',
+      r'^geo:/*(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?:;[^\?]*)?(?:\?(.*))?$',
       caseSensitive: false,
     ).firstMatch(rawUrl.trim());
     if (match == null) return null;
-    final lat = double.tryParse(match.group(1)!);
-    final lng = double.tryParse(match.group(2)!);
-    if (!isValidCoordinate(lat, lng)) return null;
+    var lat = double.tryParse(match.group(1)!);
+    var lng = double.tryParse(match.group(2)!);
 
     String? placeName;
     final queryPart = match.group(3);
     if (queryPart != null && queryPart.isNotEmpty) {
       final params = Uri.splitQueryString(queryPart);
-      final q = params['q'];
-      if (q != null) {
+      final q = params['q']?.trim();
+      if (q != null && q.isNotEmpty) {
         final labelMatch = RegExp(r'\(([^)]+)\)').firstMatch(q);
+        final coordMatch = RegExp(
+          r'(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)',
+        ).firstMatch(q);
+        if (coordMatch != null && !isValidCoordinate(lat, lng)) {
+          lat = double.tryParse(coordMatch.group(1)!);
+          lng = double.tryParse(coordMatch.group(2)!);
+        }
         if (labelMatch != null) {
-          placeName = labelMatch.group(1);
-        } else {
-          final qPair = _tryParseLatLngPair(q);
-          if (qPair == null) placeName = q;
+          placeName = labelMatch.group(1)?.trim();
+        } else if (coordMatch == null) {
+          placeName = q.replaceFirst(RegExp(r'^[،,\s]+'), '').trim();
         }
       }
     }
+    if (!isValidCoordinate(lat, lng)) return null;
     return ParsedMapLocation(
       source: 'Geo URI',
       latitude: lat!,
       longitude: lng!,
       rawUrl: rawUrl,
-      placeName: placeName,
+      placeName: (placeName != null && placeName.isNotEmpty) ? placeName : null,
     );
   }
 

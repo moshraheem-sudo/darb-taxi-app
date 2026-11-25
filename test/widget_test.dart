@@ -822,6 +822,41 @@ void main() {
 
     expect(find.text('يرجى التقاط أو اختيار الصورة الشخصية للكابتن أولاً.'), findsOneWidget);
   });
+
+  test('MapLinkParserService handles geo:/ and geo:0,0?q=lat,lng formats', () {
+    final slashGeo = MapLinkParserService.parseUrl(
+      'geo:/32.52074471,45.801719892?q=%D8%8C+%D8%B4%D8%A7%D8%B1%D8%B9+%D8%A7%D9%84%D9%83%D9%81%D8%A7%D8%A1%D8%A7%D8%AA',
+    );
+    expect(slashGeo, isNotNull);
+    expect(slashGeo!.latitude, closeTo(32.52074471, 0.000001));
+    expect(slashGeo.longitude, closeTo(45.801719892, 0.000001));
+    expect(slashGeo.placeName, 'شارع الكفاءات');
+
+    final zeroGeoWithQ = MapLinkParserService.parseUrl(
+      'geo:0,0?q=32.52074471,45.801719892(WhatsApp+Pin)',
+    );
+    expect(zeroGeoWithQ, isNotNull);
+    expect(zeroGeoWithQ!.latitude, closeTo(32.52074471, 0.000001));
+    expect(zeroGeoWithQ.longitude, closeTo(45.801719892, 0.000001));
+    expect(zeroGeoWithQ.placeName, 'WhatsApp Pin');
+
+    expect(MapLinkParserService.parseUrl('geo:0,0'), isNull);
+  });
+
+  testWidgets('GoRouter redirects external geo:/ URI without throwing GoException', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const RideApp());
+    await tester.pump();
+
+    router.go('geo:/32.52074471,45.801719892?q=%D8%A8%D8%BA%D8%AF%D8%A7%D8%AF');
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('GoException'), findsNothing);
+    expect(find.textContaining('Page Not Found'), findsNothing);
+    expect(find.text('موقع مشترك'), findsOneWidget);
+    expect(find.text('32.520745, 45.801720'), findsOneWidget);
+  });
 }
 
 class _FakeRedirectAdapter implements HttpClientAdapter {

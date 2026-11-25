@@ -671,6 +671,18 @@ class RideCubit extends Cubit<RideState> {
 }
 
 final router = GoRouter(
+  redirect: (context, state) {
+    final scheme = state.uri.scheme.toLowerCase();
+    if (scheme == 'geo' ||
+        scheme == 'darb' ||
+        scheme == 'http' ||
+        scheme == 'https') {
+      IncomingLinkService.instance.emitExternalUri(state.uri.toString());
+      return '/';
+    }
+    return null;
+  },
+  errorBuilder: (context, state) => const HomePage(),
   routes: [
     GoRoute(
       path: '/',

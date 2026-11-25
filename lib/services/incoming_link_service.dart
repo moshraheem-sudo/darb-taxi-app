@@ -24,6 +24,13 @@ class IncomingLinkService {
 
   Stream<String> get rawIncomingLinks => _controller.stream;
 
+  void emitExternalUri(String rawUri) {
+    final trimmed = rawUri.trim();
+    if (trimmed.isNotEmpty) {
+      _controller.add(trimmed);
+    }
+  }
+
   Future<String?> initializeAndCheckInitial() async {
     if (!_initialized) {
       _initialized = true;
