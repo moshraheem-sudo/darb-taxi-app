@@ -2,6 +2,7 @@ import 'package:car/main.dart';
 import 'package:car/models/ride_models.dart';
 import 'package:car/pages/captain_pages.dart';
 import 'package:car/pages/safety_page.dart';
+import 'package:car/services/captain_navigation_service.dart';
 import 'package:car/services/ride_backend_service.dart';
 import 'package:car/widgets/darb_components.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -457,5 +458,72 @@ void main() {
     );
     expect(find.text('فارغ'), findsOneWidget);
     expect(find.text('لا يوجد اتصال بالإنترنت'), findsOneWidget);
+  });
+
+  test('CaptainNavigationService parses actual OSRM routes without inventing fake routes & detects off-route', () {
+    final routes = CaptainNavigationService.parseOsrmRoutes([
+      {
+        'distance': 4500, // 4.5 km (longer distance, faster time)
+        'duration': 300, // 5 min (fastest)
+        'geometry': {
+          'coordinates': [
+            [45.8180, 32.5128],
+            [45.8250, 32.5180],
+          ],
+        },
+        'legs': [
+          {
+            'steps': [
+              {
+                'distance': 200,
+                'duration': 20,
+                'name': 'شارع الضفاف',
+                'maneuver': {
+                  'type': 'turn',
+                  'modifier': 'right',
+                  'location': [45.8210, 32.5150],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        'distance': 3200, // 3.2 km (shortest)
+        'duration': 480, // 8 min
+        'geometry': {
+          'coordinates': [
+            [45.8180, 32.5128],
+            [45.8220, 32.5150],
+          ],
+        },
+        'legs': [],
+      },
+    ]);
+
+    // Must return exactly the 2 provided routes (never fabricate a 3rd)
+    expect(routes, hasLength(2));
+    expect(routes[0].isFastest, isTrue);
+    expect(routes[0].isShortest, isFalse);
+    expect(routes[0].badgeLabel, 'الأسرع');
+    expect(routes[0].steps.first.instructionText, contains('يميناً'));
+
+    expect(routes[1].isShortest, isTrue);
+    expect(routes[1].isFastest, isFalse);
+    expect(routes[1].badgeLabel, 'الأقصر');
+
+    // On-route point
+    final onRoute = CaptainNavigationService.computeProgress(
+      current: const LatLng(32.5128, 45.8180),
+      route: routes[0],
+    );
+    expect(onRoute.isOffRoute, isFalse);
+
+    // Off-route point (> 65m away)
+    final offRoute = CaptainNavigationService.computeProgress(
+      current: const LatLng(32.5300, 45.8400),
+      route: routes[0],
+    );
+    expect(offRoute.isOffRoute, isTrue);
   });
 }

@@ -11,6 +11,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/ride_models.dart';
+import '../services/captain_navigation_service.dart';
 import '../services/location_service.dart';
 import '../services/notification_center.dart';
 import '../services/ride_backend_service.dart';
@@ -32,6 +33,9 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
   final _backend = RideBackendService.instance;
   final _locationService = GeolocatorLocationService.instance;
   final _dio = Dio();
+  late final CaptainNavigationService _navService = CaptainNavigationService(
+    dio: _dio,
+  );
 
   bool _mapReady = false;
   double _mapRotation = 0;
@@ -46,6 +50,16 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
   RideRequestPayload? _incomingRequest;
   RideRequestPayload? _activeRide;
   List<LatLng> _routePoints = const [];
+  List<CaptainRouteOption> _routeOptions = const [];
+  int _selectedRouteIndex = 0;
+  bool _selectingRoute = false;
+  bool _navigationActive = false;
+  bool _offRoute = false;
+  bool _rerouting = false;
+  double _navProgress = 0;
+  double _remainingKm = 0;
+  double _remainingMin = 0;
+  RouteStepInstruction? _nextInstruction;
 
   StreamSubscription<UserLocation>? _gpsSub;
   StreamSubscription<RideRequestPayload>? _reqSub;
@@ -173,6 +187,7 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
               _captainPosition = nextPt;
               _captainHeading = next.heading;
             });
+            _updateNavigationMetrics(nextPt);
             _backend.publishCaptainLocation(
               position: nextPt,
               heading: next.heading,
@@ -220,6 +235,119 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
           ];
         });
       }
+    }
+  }
+
+  Future<void> _enterRouteSelection(RideRequestPayload ride) async {
+    final from = LatLng(ride.originLat, ride.originLng);
+    final to = LatLng(ride.destinationLat, ride.destinationLng);
+    try {
+      final options = await _navService.fetchAlternativeRoutes(from, to);
+      if (!mounted) return;
+      if (options.isNotEmpty) {
+        setState(() {
+          _routeOptions = options;
+          _selectedRouteIndex = 0;
+          _selectingRoute = true;
+          _navigationActive = false;
+          _offRoute = false;
+          _routePoints = options.first.points;
+        });
+        _fitPoints([
+          from,
+          to,
+          for (final opt in options) ...opt.points,
+        ]);
+        return;
+      }
+    } catch (_) {}
+
+    if (!mounted) return;
+    await _loadRouteForRide(ride);
+    if (!mounted) return;
+    setState(() {
+      _routeOptions = const [];
+      _selectingRoute = true;
+      _navigationActive = false;
+    });
+  }
+
+  void _confirmSelectedRoute() {
+    if (_activeRide == null) return;
+    final chosen = (_routeOptions.isNotEmpty &&
+            _selectedRouteIndex < _routeOptions.length)
+        ? _routeOptions[_selectedRouteIndex]
+        : CaptainRouteOption(
+            index: 0,
+            distanceKm: _activeRide!.distanceKm,
+            durationMin: _activeRide!.durationMin,
+            points: _routePoints,
+          );
+    setState(() {
+      _routeOptions = [chosen];
+      _selectedRouteIndex = 0;
+      _routePoints = chosen.points;
+      _selectingRoute = false;
+      _navigationActive = true;
+      _offRoute = false;
+      _navProgress = 0;
+      _remainingKm = chosen.distanceKm;
+      _remainingMin = chosen.durationMin;
+      _nextInstruction =
+          chosen.steps.isNotEmpty ? chosen.steps.first : null;
+    });
+    _fitPoints(chosen.points);
+    if (!_hasServerUrl) {
+      _startSimulatedMove();
+    }
+  }
+
+  void _updateNavigationMetrics(LatLng current) {
+    if (!_navigationActive || _activeRide == null || _routeOptions.isEmpty) {
+      return;
+    }
+    final activeRoute = _routeOptions.first;
+    final snap = CaptainNavigationService.computeProgress(
+      current: current,
+      route: activeRoute,
+    );
+    if (!mounted) return;
+    setState(() {
+      _navProgress = snap.progress;
+      _remainingKm = snap.remainingKm;
+      _remainingMin = snap.remainingMin;
+      _nextInstruction = snap.nextStep;
+      _offRoute = snap.isOffRoute;
+    });
+    if (snap.isOffRoute && !_rerouting) {
+      _rerouteFromCurrent(current, _activeRide!);
+    }
+  }
+
+  Future<void> _rerouteFromCurrent(
+    LatLng current,
+    RideRequestPayload ride,
+  ) async {
+    _rerouting = true;
+    try {
+      final to = LatLng(ride.destinationLat, ride.destinationLng);
+      final routes = await _navService.fetchAlternativeRoutes(current, to);
+      if (!mounted || !_navigationActive || routes.isEmpty) return;
+      final rerouted = routes.first;
+      setState(() {
+        _routeOptions = [rerouted];
+        _selectedRouteIndex = 0;
+        _routePoints = rerouted.points;
+        _offRoute = false;
+        _remainingKm = rerouted.distanceKm;
+        _remainingMin = rerouted.durationMin;
+        _nextInstruction =
+            rerouted.steps.isNotEmpty ? rerouted.steps.first : null;
+      });
+    } catch (_) {
+      // Keep original route & off-route banner if offline
+    } finally {
+      _rerouting = false;
     }
   }
 
@@ -382,6 +510,11 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
           _profile = refreshed;
           _activeRide = null;
           _routePoints = const [];
+          _routeOptions = const [];
+          _selectingRoute = false;
+          _navigationActive = false;
+          _offRoute = false;
+          _nextInstruction = null;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -396,16 +529,21 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
         setState(() {
           _activeRide = null;
           _routePoints = const [];
+          _routeOptions = const [];
+          _selectingRoute = false;
+          _navigationActive = false;
+          _offRoute = false;
+          _nextInstruction = null;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم إلغاء الرحلة.')),
         );
+      } else if (next == RideDispatchStatus.inProgress) {
+        setState(() => _activeRide = updated);
+        await _enterRouteSelection(updated);
       } else {
         setState(() => _activeRide = updated);
         await _loadRouteForRide(updated);
-        if (!_hasServerUrl && next == RideDispatchStatus.inProgress) {
-          _startSimulatedMove();
-        }
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -424,6 +562,7 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
       final nextPt = _routePoints[idx];
       idx += (_routePoints.length > 20) ? (_routePoints.length ~/ 12) : 1;
       setState(() => _captainPosition = nextPt);
+      _updateNavigationMetrics(nextPt);
       _backend.publishCaptainLocation(
         position: nextPt,
         heading: _captainHeading,
@@ -514,7 +653,25 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
                 maxZoom: 19,
                 keepBuffer: 4,
               ),
-              if (_routePoints.isNotEmpty)
+              if (_selectingRoute && _routeOptions.isNotEmpty)
+                PolylineLayer(
+                  polylines: [
+                    for (var i = 0; i < _routeOptions.length; i++)
+                      if (i != _selectedRouteIndex)
+                        Polyline(
+                          points: _routeOptions[i].points,
+                          color: _routeColorForIndex(i).withValues(alpha: 0.42),
+                          strokeWidth: 3.5,
+                        ),
+                    if (_selectedRouteIndex < _routeOptions.length)
+                      Polyline(
+                        points: _routeOptions[_selectedRouteIndex].points,
+                        color: _routeColorForIndex(_selectedRouteIndex),
+                        strokeWidth: 6.5,
+                      ),
+                  ],
+                )
+              else if (_routePoints.isNotEmpty)
                 PolylineLayer(
                   polylines: [
                     Polyline(
@@ -678,6 +835,66 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
             ),
           ),
 
+          // Top Navigation Banner (Turn-by-Turn & Off-Route Alert)
+          if (_navigationActive && (_nextInstruction != null || _offRoute))
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + 70,
+              left: 16,
+              right: 16,
+              child: Material(
+                elevation: 6,
+                borderRadius: BorderRadius.circular(18),
+                color: _offRoute ? const Color(0xFFD93829) : _captainInk,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _offRoute
+                            ? Icons.alt_route_rounded
+                            : _maneuverIcon(_nextInstruction?.modifier ?? ''),
+                        color: Colors.white,
+                        size: 28,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _offRoute
+                                  ? 'تم الخروج عن المسار — جارٍ إعادة الحساب...'
+                                  : (_nextInstruction?.instructionText ??
+                                      'اتبع المسار المعتمد'),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                              ),
+                            ),
+                            if (!_offRoute && _nextInstruction != null)
+                              Text(
+                                '${_nextInstruction!.distanceMeters.round()} م • المتبقي ${_remainingKm.toStringAsFixed(1)} كم (${_remainingMin.ceil()} د)',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
           // Bottom Controls + Captain Panel
           Positioned(
             left: 0,
@@ -724,6 +941,13 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
                 ),
                 if (_loading)
                   const LinearProgressIndicator()
+                else if (_activeRide != null && _selectingRoute)
+                  _buildRouteSelectionSheet(
+                    _activeRide!,
+                    surface,
+                    primaryText,
+                    secondaryText,
+                  )
                 else if (_activeRide != null)
                   _buildActiveRideCard(
                     _activeRide!,
@@ -1101,6 +1325,182 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
     );
   }
 
+  Color _routeColorForIndex(int idx) {
+    switch (idx) {
+      case 0:
+        return _captainBlue;
+      case 1:
+        return _captainGreen;
+      default:
+        return const Color(0xFFE56A2B);
+    }
+  }
+
+  IconData _maneuverIcon(String modifier) {
+    if (modifier.contains('right')) return Icons.turn_right_rounded;
+    if (modifier.contains('left')) return Icons.turn_left_rounded;
+    if (modifier == 'uturn') return Icons.u_turn_right_rounded;
+    return Icons.straight_rounded;
+  }
+
+  Widget _buildRouteSelectionSheet(
+    RideRequestPayload ride,
+    Color surface,
+    Color primaryText,
+    Color secondaryText,
+  ) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 20),
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 18)],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.alt_route_rounded, color: _captainBlue),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'اختر مسار الملاحة إلى الوجهة',
+                    style: TextStyle(
+                      fontSize: 16.5,
+                      fontWeight: FontWeight.w900,
+                      color: primaryText,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${_routeOptions.length} مسارات',
+                  style: TextStyle(fontSize: 12.5, color: secondaryText),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'إلى: ${ride.destinationName}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12.5, color: secondaryText),
+            ),
+            const SizedBox(height: 12),
+            if (_routeOptions.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'يتوفر المسار المباشر الحالي فقط (تعذر جلب بدائل إضافية من محرك التوجيه).',
+                  style: TextStyle(fontSize: 12.5, color: secondaryText),
+                ),
+              )
+            else
+              SizedBox(
+                height: 98,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _routeOptions.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 10),
+                  itemBuilder: (context, idx) {
+                    final opt = _routeOptions[idx];
+                    final selected = idx == _selectedRouteIndex;
+                    final color = _routeColorForIndex(idx);
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () {
+                        setState(() {
+                          _selectedRouteIndex = idx;
+                          _routePoints = opt.points;
+                        });
+                        _fitPoints(opt.points);
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        width: 158,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? color.withValues(alpha: 0.12)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: selected ? color : Colors.grey.shade300,
+                            width: selected ? 2 : 1,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                opt.badgeLabel,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: color,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              '${opt.durationMin.ceil()} دقيقة',
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w900,
+                                color: primaryText,
+                              ),
+                            ),
+                            Text(
+                              '${opt.distanceKm.toStringAsFixed(1)} كم',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                color: secondaryText,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: _confirmSelectedRoute,
+              style: FilledButton.styleFrom(
+                backgroundColor: _captainGreen,
+                minimumSize: const Size.fromHeight(50),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              icon: const Icon(Icons.navigation_rounded),
+              label: const Text(
+                'اعتماد المسار والبدء بالملاحة',
+                style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _confirmCancelActiveRide() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1200,12 +1600,40 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
               ],
             ),
             const SizedBox(height: 8),
+            if (_navigationActive) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'المتبقي: ${_remainingKm.toStringAsFixed(1)} كم • ${_remainingMin.ceil()} دقيقة',
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: _captainBlue,
+                    ),
+                  ),
+                  Text(
+                    '${(_navProgress * 100).round()}%',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: secondaryText,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+            ],
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
-                value: ride.status == RideDispatchStatus.inProgress
-                    ? 1.0
-                    : (ride.status == RideDispatchStatus.arrived ? 0.66 : 0.33),
+                value: _navigationActive
+                    ? _navProgress
+                    : (ride.status == RideDispatchStatus.inProgress
+                        ? 1.0
+                        : (ride.status == RideDispatchStatus.arrived
+                            ? 0.66
+                            : 0.33)),
                 minHeight: 5,
                 backgroundColor: secondaryText.withValues(alpha: 0.15),
                 color: ride.status == RideDispatchStatus.inProgress
