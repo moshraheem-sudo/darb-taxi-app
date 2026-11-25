@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/ride_models.dart';
 import '../services/captain_navigation_service.dart';
+import '../services/captain_photo_service.dart';
 import '../services/iraqi_navigation_service.dart';
 import '../services/location_service.dart';
 import '../services/notification_center.dart';
@@ -30,7 +31,8 @@ class CaptainHomePage extends StatefulWidget {
   State<CaptainHomePage> createState() => _CaptainHomePageState();
 }
 
-class _CaptainHomePageState extends State<CaptainHomePage> {
+class _CaptainHomePageState extends State<CaptainHomePage>
+    with TickerProviderStateMixin {
   final _map = MapController();
   final _backend = RideBackendService.instance;
   final _locationService = GeolocatorLocationService.instance;
@@ -38,11 +40,23 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
   late final CaptainNavigationService _navService = CaptainNavigationService(
     dio: _dio,
   );
+  late final AnimationController _navAnimController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 450),
+  );
+  final OffRouteDetector _offRouteDetector = OffRouteDetector();
 
   bool _mapReady = false;
   double _mapRotation = 0;
+  double _currentZoom = 14.5;
   LatLng _captainPosition = const LatLng(32.5050, 45.8230);
+  LatLng _animStartPos = const LatLng(32.5050, 45.8230);
+  LatLng _animEndPos = const LatLng(32.5050, 45.8230);
   double _captainHeading = 0;
+  double _animStartHeading = 0;
+  double _animEndHeading = 0;
+  int _speedKmh = 0;
+  bool _autoRotateMap = true;
   CaptainProfile _profile = const CaptainProfile();
   bool _loading = true;
   bool _busy = false;
@@ -80,7 +94,37 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
   @override
   void initState() {
     super.initState();
+    _navAnimController.addListener(_onNavAnimationTick);
     _initCaptain();
+  }
+
+  void _onNavAnimationTick() {
+    if (!mounted) return;
+    final t = Curves.easeOutCubic.transform(_navAnimController.value);
+    final lat = ui.lerpDouble(_animStartPos.latitude, _animEndPos.latitude, t)!;
+    final lng = ui.lerpDouble(_animStartPos.longitude, _animEndPos.longitude, t)!;
+    var deltaHeading = ((_animEndHeading - _animStartHeading + 540) % 360) - 180;
+    final heading = (_animStartHeading + deltaHeading * t + 360) % 360;
+    setState(() {
+      _captainPosition = LatLng(lat, lng);
+      _captainHeading = heading;
+    });
+    if (_navigationActive && _followCamera && _mapReady) {
+      _map.move(_captainPosition, _currentZoom < 15.5 ? 16.5 : _currentZoom);
+      if (_autoRotateMap) {
+        _map.rotate(-heading);
+      }
+    }
+  }
+
+  void _animateCaptainTo(LatLng target, double heading) {
+    _animStartPos = _captainPosition;
+    _animEndPos = target;
+    _animStartHeading = _captainHeading;
+    _animEndHeading = heading;
+    _navAnimController
+      ..reset()
+      ..forward();
   }
 
   Future<void> _initCaptain() async {
@@ -160,16 +204,20 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
 
   @override
   void dispose() {
+    _navAnimController.removeListener(_onNavAnimationTick);
+    _navAnimController.dispose();
     _requestCountdownTimer?.cancel();
     _simMoveTimer?.cancel();
     _gpsSub?.cancel();
     _reqSub?.cancel();
     _claimedSub?.cancel();
     _updateSub?.cancel();
+    unawaited(NotificationCenterService.cancelOngoingNavigationNotification());
     super.dispose();
   }
 
-  Future<void> _startGpsTracking() async {
+  Future<void> _startGpsTracking({bool? highPrecision}) async {
+    final useHigh = highPrecision ?? _navigationActive;
     try {
       final pos = await _locationService.getCurrentUserLocation();
       if (!mounted) return;
@@ -177,8 +225,9 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
       setState(() {
         _captainPosition = pt;
         _captainHeading = pos.heading;
+        _speedKmh = CaptainNavigationService.speedKmh(pos.speedMps);
       });
-      if (_mapReady) _map.move(pt, 15);
+      if (_mapReady) _map.move(pt, useHigh ? 16.5 : 15);
       await _backend.publishCaptainLocation(
         position: pt,
         heading: pos.heading,
@@ -187,15 +236,21 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
 
       await _gpsSub?.cancel();
       _gpsSub = _locationService
-          .watchUserLocation(distanceFilterMeters: 8)
+          .watchUserLocation(
+            distanceFilterMeters: useHigh ? 5 : 20,
+            highPrecision: useHigh,
+          )
           .listen((next) {
             if (!mounted) return;
             final nextPt = LatLng(next.latitude, next.longitude);
             setState(() {
-              _captainPosition = nextPt;
-              _captainHeading = next.heading;
+              _speedKmh = CaptainNavigationService.speedKmh(next.speedMps);
             });
-            _updateNavigationMetrics(nextPt);
+            _animateCaptainTo(nextPt, next.heading);
+            _updateNavigationMetrics(
+              nextPt,
+              accuracyMeters: next.accuracyMeters,
+            );
             _backend.publishCaptainLocation(
               position: nextPt,
               heading: next.heading,
@@ -308,17 +363,31 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
           chosen.steps.length > 1 ? chosen.steps[1] : null;
       _dynamicInstruction = _nextInstruction?.instructionText ?? '';
       _lastSpokenKey = null;
+      _currentZoom = 16.5;
     });
+    _offRouteDetector.reset();
     _fitPoints(chosen.points);
     if (_voiceEnabled && _dynamicInstruction.isNotEmpty) {
       CaptainNavigationService.speakArabic(_dynamicInstruction);
     }
+    unawaited(
+      NotificationCenterService.showOngoingNavigationNotification(
+        title: 'الملاحة النشطة — ${_activeRide!.destinationName}',
+        body: _dynamicInstruction.isNotEmpty
+            ? _dynamicInstruction
+            : 'اتبع المسار المعتمد',
+      ),
+    );
+    unawaited(_startGpsTracking(highPrecision: true));
     if (!_hasServerUrl) {
       _startSimulatedMove();
     }
   }
 
-  void _updateNavigationMetrics(LatLng current) {
+  void _updateNavigationMetrics(
+    LatLng current, {
+    double accuracyMeters = 0,
+  }) {
     if (!_navigationActive || _activeRide == null || _routeOptions.isEmpty) {
       return;
     }
@@ -326,6 +395,10 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
     final snap = CaptainNavigationService.computeProgress(
       current: current,
       route: activeRoute,
+    );
+    final confirmedOffRoute = _offRouteDetector.evaluate(
+      isSampleOffRoute: snap.isOffRoute,
+      accuracyMeters: accuracyMeters,
     );
     if (!mounted) return;
     setState(() {
@@ -335,20 +408,30 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
       _nextInstruction = snap.nextStep;
       _followingInstruction = snap.followingStep;
       _dynamicInstruction = snap.dynamicInstruction;
-      _offRoute = snap.isOffRoute;
+      _offRoute = confirmedOffRoute;
     });
     if (_followCamera && _mapReady) {
-      _map.move(current, 16.5);
+      _map.move(current, _currentZoom < 15.5 ? 16.5 : _currentZoom);
+      if (_autoRotateMap) {
+        _map.rotate(-_captainHeading);
+      }
     }
     if (_voiceEnabled &&
-        !snap.isOffRoute &&
+        !confirmedOffRoute &&
         snap.speechKey != null &&
         snap.speechKey != _lastSpokenKey &&
         snap.dynamicInstruction.isNotEmpty) {
       _lastSpokenKey = snap.speechKey;
       CaptainNavigationService.speakArabic(snap.dynamicInstruction);
+      unawaited(
+        NotificationCenterService.showOngoingNavigationNotification(
+          title:
+              '${snap.remainingKm.toStringAsFixed(1)} كم • ${snap.remainingMin.ceil()} د',
+          body: snap.dynamicInstruction,
+        ),
+      );
     }
-    if (snap.isOffRoute && !_rerouting) {
+    if (confirmedOffRoute && !_rerouting) {
       if (_voiceEnabled) {
         CaptainNavigationService.speakArabic(
           'تم الخروج عن المسار، جارٍ إعادة الحساب',
@@ -397,10 +480,16 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
   }
 
   Future<void> _toggleOnline(bool value) async {
-    if (value && _profile.approvalStatus != CaptainApprovalStatus.approved) {
+    if (value &&
+        (_profile.approvalStatus != CaptainApprovalStatus.approved ||
+            !_profile.hasProfilePhoto)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('أكمل بيانات الكابتن والموافقة على الحساب أولاً.'),
+        SnackBar(
+          content: Text(
+            !_profile.hasProfilePhoto
+                ? 'يرجى رفع الصورة الشخصية للكابتن أولاً قبل تفعيل حالة متاح للعمل.'
+                : 'أكمل بيانات الكابتن والموافقة على الحساب أولاً.',
+          ),
         ),
       );
       await context.push('/captain/onboarding');
@@ -550,7 +639,11 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
           _offRoute = false;
           _nextInstruction = null;
           _navPromptShownForRideId = null;
+          _speedKmh = 0;
         });
+        unawaited(NotificationCenterService.cancelOngoingNavigationNotification());
+        if (_mapReady) _map.rotate(0);
+        unawaited(_startGpsTracking(highPrecision: false));
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: _captainGreen,
@@ -570,7 +663,11 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
           _offRoute = false;
           _nextInstruction = null;
           _navPromptShownForRideId = null;
+          _speedKmh = 0;
         });
+        unawaited(NotificationCenterService.cancelOngoingNavigationNotification());
+        if (_mapReady) _map.rotate(0);
+        unawaited(_startGpsTracking(highPrecision: false));
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم إلغاء الرحلة.')),
         );
@@ -795,6 +892,7 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
               initialZoom: 14.5,
               onMapReady: () => _mapReady = true,
               onPositionChanged: (camera, hasGesture) {
+                _currentZoom = camera.zoom;
                 if ((camera.rotation - _mapRotation).abs() > 0.5 && mounted) {
                   setState(() => _mapRotation = camera.rotation);
                 }
@@ -812,6 +910,7 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
                 userAgentPackageName: 'iq.ridepassenger.car',
                 maxZoom: 19,
                 keepBuffer: 4,
+                tileBuilder: dark ? darkModeTileBuilder : null,
               ),
               if (_selectingRoute && _routeOptions.isNotEmpty)
                 PolylineLayer(
@@ -1071,51 +1170,163 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
-                  padding: const EdgeInsets.only(left: 16, bottom: 12),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_mapRotation.abs() > 1.0) ...[
-                          FloatingActionButton.small(
-                            heroTag: 'captain_compass',
-                            onPressed: () {
-                              if (_mapReady) _map.rotate(0);
-                              setState(() => _mapRotation = 0);
-                            },
-                            backgroundColor: surface,
-                            foregroundColor: const Color(0xFFE53935),
-                            child: AnimatedRotation(
-                              turns: _mapRotation / 360,
-                              duration: const Duration(milliseconds: 120),
-                              child: const Icon(Icons.explore),
-                            ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(bottom: 12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      if (_navigationActive)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
                           ),
-                          const SizedBox(height: 10),
+                          decoration: BoxDecoration(
+                            color: surface.withValues(alpha: 0.94),
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: const [
+                              BoxShadow(color: Colors.black26, blurRadius: 8),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '$_speedKmh',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w900,
+                                  color: primaryText,
+                                  height: 1.0,
+                                ),
+                              ),
+                              Text(
+                                'كم/س',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: secondaryText,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        const SizedBox.shrink(),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_navigationActive && _routePoints.isNotEmpty) ...[
+                            FloatingActionButton.small(
+                              heroTag: 'captain_fit_route',
+                              tooltip: 'عرض المسار الكامل',
+                              onPressed: () {
+                                setState(() => _followCamera = false);
+                                _fitPoints(_routePoints);
+                              },
+                              backgroundColor: surface,
+                              foregroundColor: primaryText,
+                              child: const Icon(Icons.alt_route_rounded),
+                            ),
+                            const SizedBox(height: 8),
+                            FloatingActionButton.small(
+                              heroTag: 'captain_auto_rotate',
+                              tooltip: _autoRotateMap
+                                  ? 'إيقاف تدوير الخريطة'
+                                  : 'تدوير الخريطة تلقائياً',
+                              onPressed: () {
+                                setState(() => _autoRotateMap = !_autoRotateMap);
+                                if (!_autoRotateMap && _mapReady) {
+                                  _map.rotate(0);
+                                  setState(() => _mapRotation = 0);
+                                }
+                              },
+                              backgroundColor: _autoRotateMap
+                                  ? _captainBlue
+                                  : surface,
+                              foregroundColor: _autoRotateMap
+                                  ? Colors.white
+                                  : primaryText,
+                              child: const Icon(Icons.screen_rotation_alt_rounded),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                          if (_mapRotation.abs() > 1.0) ...[
+                            FloatingActionButton.small(
+                              heroTag: 'captain_compass',
+                              tooltip: 'العودة لاتجاه الشمال',
+                              onPressed: () {
+                                if (_mapReady) _map.rotate(0);
+                                setState(() {
+                                  _mapRotation = 0;
+                                  _autoRotateMap = false;
+                                });
+                              },
+                              backgroundColor: surface,
+                              foregroundColor: const Color(0xFFE53935),
+                              child: AnimatedRotation(
+                                turns: _mapRotation / 360,
+                                duration: const Duration(milliseconds: 120),
+                                child: const Icon(Icons.explore),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                          if (_navigationActive) ...[
+                            FloatingActionButton.small(
+                              heroTag: 'captain_zoom_in',
+                              tooltip: 'تكبير',
+                              onPressed: () {
+                                if (!_mapReady) return;
+                                final z = (_currentZoom + 1).clamp(3.0, 19.0);
+                                _map.move(_map.camera.center, z);
+                              },
+                              backgroundColor: surface,
+                              foregroundColor: primaryText,
+                              child: const Icon(Icons.add),
+                            ),
+                            const SizedBox(height: 6),
+                            FloatingActionButton.small(
+                              heroTag: 'captain_zoom_out',
+                              tooltip: 'تصغير',
+                              onPressed: () {
+                                if (!_mapReady) return;
+                                final z = (_currentZoom - 1).clamp(3.0, 19.0);
+                                _map.move(_map.camera.center, z);
+                              },
+                              backgroundColor: surface,
+                              foregroundColor: primaryText,
+                              child: const Icon(Icons.remove),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                          FloatingActionButton.small(
+                            heroTag: 'captain_my_loc',
+                            tooltip: 'إعادة التمركز',
+                            onPressed: () {
+                              setState(() => _followCamera = true);
+                              if (_mapReady) {
+                                _map.move(
+                                  _captainPosition,
+                                  _navigationActive ? 16.5 : 15,
+                                );
+                                if (_navigationActive && _autoRotateMap) {
+                                  _map.rotate(-_captainHeading);
+                                }
+                              }
+                              _startGpsTracking(highPrecision: _navigationActive);
+                            },
+                            backgroundColor: !_followCamera && _navigationActive
+                                ? _captainBlue
+                                : surface,
+                            foregroundColor: !_followCamera && _navigationActive
+                                ? Colors.white
+                                : primaryText,
+                            child: const Icon(Icons.my_location),
+                          ),
                         ],
-                        FloatingActionButton.small(
-                          heroTag: 'captain_my_loc',
-                          onPressed: () {
-                            setState(() => _followCamera = true);
-                            if (_mapReady) {
-                              _map.move(
-                                _captainPosition,
-                                _navigationActive ? 16.5 : 15,
-                              );
-                            }
-                            _startGpsTracking();
-                          },
-                          backgroundColor: !_followCamera && _navigationActive
-                              ? _captainBlue
-                              : surface,
-                          foregroundColor: !_followCamera && _navigationActive
-                              ? Colors.white
-                              : primaryText,
-                          child: const Icon(Icons.my_location),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
                 if (_loading)
@@ -2056,6 +2267,35 @@ class _CaptainOnboardingPageState extends State<CaptainOnboardingPage> {
     }
   }
 
+  Future<void> _pickCaptainPhoto(ImageSource source) async {
+    setState(() => _saving = true);
+    try {
+      final result = await CaptainPhotoService.pickCropAndValidate(
+        source: source,
+      );
+      if (result == null || !mounted) return;
+      if (!result.isValid || result.filePath == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text(result.message),
+          ),
+        );
+        return;
+      }
+      final updated = _profile.copyWith(localPhotoPath: result.filePath!);
+      setState(() => _profile = updated);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _captainGreen,
+          content: Text(result.message),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _save() async {
     if (_name.text.trim().isEmpty ||
         _carModel.text.trim().isEmpty ||
@@ -2063,6 +2303,15 @@ class _CaptainOnboardingPageState extends State<CaptainOnboardingPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('أدخل الاسم ونوع السيارة ورقم اللوحة أولاً.'),
+        ),
+      );
+      return;
+    }
+    if (!_profile.hasProfilePhoto) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('يرجى التقاط أو اختيار الصورة الشخصية للكابتن أولاً.'),
         ),
       );
       return;
@@ -2159,6 +2408,152 @@ class _CaptainOnboardingPageState extends State<CaptainOnboardingPage> {
                         CaptainApprovalStatus.unsubmitted => 'بانتظار إكمال البيانات',
                       }}',
                       style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Card(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(
+                      color: _profile.hasProfilePhoto
+                          ? _captainGreen.withValues(alpha: 0.45)
+                          : Colors.orange.withValues(alpha: 0.55),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.face_retouching_natural_rounded,
+                                color: _captainGreen),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                'الصورة الشخصية للكابتن',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _profile.hasProfilePhoto
+                                    ? _captainGreen.withValues(alpha: 0.14)
+                                    : Colors.orange.withValues(alpha: 0.16),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                _profile.hasProfilePhoto ? 'معتمدة' : 'مطلوبة',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: _profile.hasProfilePhoto
+                                      ? _captainGreen
+                                      : Colors.deepOrange,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Center(
+                          child: Container(
+                            width: 96,
+                            height: 96,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: _captainGreen.withValues(alpha: 0.1),
+                              border: Border.all(
+                                color: _profile.hasProfilePhoto
+                                    ? _captainGreen
+                                    : Colors.grey.shade400,
+                                width: 2.5,
+                              ),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: CaptainPhotoService.isRemotePhotoUrl(
+                                    _profile.photoUrl)
+                                ? Image.network(
+                                    _profile.photoUrl,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, _, _) => const Icon(
+                                      Icons.person_rounded,
+                                      size: 48,
+                                      color: _captainGreen,
+                                    ),
+                                  )
+                                : (_profile.localPhotoPath.isNotEmpty &&
+                                        File(_profile.localPhotoPath)
+                                            .existsSync())
+                                    ? Image.file(
+                                        File(_profile.localPhotoPath),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : const Icon(
+                                        Icons.person_rounded,
+                                        size: 48,
+                                        color: _captainGreen,
+                                      ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'تُظهر هذه الصورة للزبون للتعرّف على السائق. يجب أن تكون صورة واضحة لوجه واحد فقط بنسبة 1:1.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: FilledButton.icon(
+                                onPressed: _saving
+                                    ? null
+                                    : () => _pickCaptainPhoto(
+                                        ImageSource.camera,
+                                      ),
+                                icon: const Icon(Icons.camera_alt_outlined),
+                                label: Text(
+                                  _profile.hasProfilePhoto
+                                      ? 'إعادة التصوير'
+                                      : 'الكاميرا',
+                                ),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: _captainGreen,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: _saving
+                                    ? null
+                                    : () => _pickCaptainPhoto(
+                                        ImageSource.gallery,
+                                      ),
+                                icon: const Icon(Icons.photo_library_outlined),
+                                label: Text(
+                                  _profile.hasProfilePhoto
+                                      ? 'تغيير الصورة'
+                                      : 'المعرض',
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                 ),

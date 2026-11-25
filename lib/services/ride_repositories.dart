@@ -68,7 +68,10 @@ abstract class RideDispatchRepository {
 /// Abstraction for device GPS & background location updates (ready for live tracking).
 abstract class LocationServiceInterface {
   Future<UserLocation> getCurrentUserLocation();
-  Stream<UserLocation> watchUserLocation({int distanceFilterMeters = 5});
+  Stream<UserLocation> watchUserLocation({
+    int distanceFilterMeters = 5,
+    bool highPrecision = true,
+  });
   double distanceKm(LatLng from, LatLng to);
 }
 

@@ -976,7 +976,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         car: pending.captainCar ?? 'أبيض Kia Optima',
         phone: pending.captainPhone ?? '',
         plate: pending.captainPlate ?? '',
-        photoUrl: '',
+        photoUrl: pending.captainPhotoUrl ?? '',
         rating: pending.captainRating ?? 4.9,
       );
     }
@@ -1017,7 +1017,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           car: updated.captainCar ?? 'أبيض Kia Optima',
           phone: updated.captainPhone ?? '',
           plate: updated.captainPlate ?? '',
-          photoUrl: '',
+          photoUrl: updated.captainPhotoUrl ?? '',
           rating: updated.captainRating ?? 4.9,
         );
       }
@@ -1702,6 +1702,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       'destination': ride.destinationName,
       'driver': ride.driverName,
       'car': ride.driverCar,
+      if (ride.driverPhotoUrl.isNotEmpty) 'captain_photo_url': ride.driverPhotoUrl,
+      'captain_rating': ride.driverRating,
       'price': price,
       'kilometers': ride.route?.kilometers,
     });
@@ -2656,8 +2658,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               const SizedBox(height: 9),
               Row(
                 children: [
-                  const Icon(Icons.keyboard_arrow_up, color: green, size: 26),
-                  const SizedBox(width: 8),
+                  if (state.rideStatus == RideBookingStatus.driverAssigned ||
+                      state.rideStatus == RideBookingStatus.driverArrived ||
+                      state.rideStatus == RideBookingStatus.inProgress) ...[
+                    _CaptainAvatar(
+                      photoUrl: state.driverPhotoUrl,
+                      radius: 18,
+                      dark: state.dark,
+                    ),
+                    const SizedBox(width: 10),
+                  ] else ...[
+                    const Icon(Icons.keyboard_arrow_up, color: green, size: 26),
+                    const SizedBox(width: 8),
+                  ],
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4341,9 +4354,33 @@ class _HistoryPageState extends State<HistoryPage> {
                           ],
                         ),
                         const SizedBox(height: 8),
-                        Text(
-                          '$captainLabel${ride['car'] != null ? ' • ${ride['car']}' : ''}',
-                          style: const TextStyle(fontSize: 13),
+                        Row(
+                          children: [
+                            _CaptainAvatar(
+                              photoUrl:
+                                  ride['captain_photo_url']?.toString() ?? '',
+                              radius: 16,
+                              dark: Theme.of(context).brightness == Brightness.dark,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '$captainLabel${ride['car'] != null ? ' • ${ride['car']}' : ''}',
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                            ),
+                            if (ride['captain_rating'] != null) ...[
+                              const Icon(Icons.star, size: 14, color: Color(0xFFFFB800)),
+                              const SizedBox(width: 2),
+                              Text(
+                                '${ride['captain_rating']}',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                         if (dateLabel.isNotEmpty || kmVal != null)
                           Text(
@@ -5520,21 +5557,10 @@ class _RideFeedbackPageState extends State<RideFeedbackPage> {
             // Driver Card
             Row(
               children: [
-                Container(
-                  width: 60,
-                  height: 60,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.grey.shade200,
-                    boxShadow: const [
-                      BoxShadow(color: Colors.black12, blurRadius: 6),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.person,
-                    size: 40,
-                    color: Color(0xFF4A5568),
-                  ),
+                _CaptainAvatar(
+                  photoUrl: state.driverPhotoUrl,
+                  radius: 30,
+                  dark: dark,
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -5551,8 +5577,23 @@ class _RideFeedbackPageState extends State<RideFeedbackPage> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        state.driverCar,
+                        '${state.driverCar}${state.driverPlate.isNotEmpty ? ' • ${state.driverPlate}' : ''}',
                         style: TextStyle(fontSize: 14, color: mutedText),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          const Icon(Icons.star, size: 15, color: Color(0xFFFFB800)),
+                          const SizedBox(width: 4),
+                          Text(
+                            state.driverRating.toStringAsFixed(1),
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: primaryText,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -5921,6 +5962,49 @@ class _RoleOptionCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _CaptainAvatar extends StatelessWidget {
+  const _CaptainAvatar({
+    required this.photoUrl,
+    required this.radius,
+    required this.dark,
+  });
+
+  final String photoUrl;
+  final double radius;
+  final bool dark;
+
+  @override
+  Widget build(BuildContext context) {
+    final isRemote =
+        photoUrl.startsWith('https://') || photoUrl.startsWith('http://');
+    return Container(
+      width: radius * 2,
+      height: radius * 2,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: dark ? const Color(0xFF273B38) : const Color(0xFFEAF0FF),
+        border: Border.all(color: const Color(0xFFDAE3FF)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: !isRemote
+          ? Icon(
+              Icons.person_rounded,
+              size: radius * 1.15,
+              color: const Color(0xFF194BFB),
+            )
+          : Image.network(
+              photoUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Icon(
+                Icons.person_rounded,
+                size: radius * 1.15,
+                color: const Color(0xFF194BFB),
+              ),
+            ),
     );
   }
 }

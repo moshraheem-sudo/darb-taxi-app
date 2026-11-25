@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../models/ride_models.dart';
+import 'captain_photo_service.dart';
 import 'notification_center.dart';
 import 'ride_repositories.dart';
 
@@ -604,6 +605,9 @@ class RideBackendService
       captainCar: carDesc.isEmpty ? 'أبيض Kia Optima' : carDesc,
       captainPlate: captain.plateNumber,
       captainRating: captain.rating,
+      captainPhotoUrl: CaptainPhotoService.isRemotePhotoUrl(captain.photoUrl)
+          ? captain.photoUrl
+          : null,
       version: request.version + 1,
     );
     final prefs = await SharedPreferences.getInstance();

@@ -41,15 +41,22 @@ class GeolocatorLocationService implements LocationServiceInterface {
       latitude: position.latitude,
       longitude: position.longitude,
       heading: position.heading,
+      speedMps: position.speed < 0 ? 0 : position.speed,
+      accuracyMeters: position.accuracy,
       updatedAt: DateTime.now(),
     );
   }
 
   @override
-  Stream<UserLocation> watchUserLocation({int distanceFilterMeters = 5}) {
+  Stream<UserLocation> watchUserLocation({
+    int distanceFilterMeters = 5,
+    bool highPrecision = true,
+  }) {
     return Geolocator.getPositionStream(
       locationSettings: LocationSettings(
-        accuracy: LocationAccuracy.high,
+        accuracy: highPrecision
+            ? LocationAccuracy.bestForNavigation
+            : LocationAccuracy.medium,
         distanceFilter: distanceFilterMeters,
       ),
     ).map(
@@ -57,6 +64,8 @@ class GeolocatorLocationService implements LocationServiceInterface {
         latitude: pos.latitude,
         longitude: pos.longitude,
         heading: pos.heading,
+        speedMps: pos.speed < 0 ? 0 : pos.speed,
+        accuracyMeters: pos.accuracy,
         updatedAt: DateTime.now(),
       ),
     );

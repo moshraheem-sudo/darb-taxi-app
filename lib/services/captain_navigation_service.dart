@@ -373,4 +373,40 @@ class CaptainNavigationService {
       speechKey: speechKey,
     );
   }
+
+  /// Converts GPS speed in m/s to rounded km/h, suppressing stationary jitter.
+  static int speedKmh(double speedMps) {
+    if (speedMps.isNaN || speedMps <= 0.6) return 0;
+    return (speedMps * 3.6).round();
+  }
+}
+
+/// Filters GPS noise before confirming off-route rerouting.
+class OffRouteDetector {
+  OffRouteDetector({
+    this.maxAcceptableAccuracyMeters = 45,
+    this.consecutiveSamplesRequired = 2,
+  });
+
+  final double maxAcceptableAccuracyMeters;
+  final int consecutiveSamplesRequired;
+  int _consecutiveOffRoute = 0;
+
+  void reset() => _consecutiveOffRoute = 0;
+
+  /// Returns `true` only when enough accurate consecutive samples are off-route.
+  bool evaluate({
+    required bool isSampleOffRoute,
+    double accuracyMeters = 0,
+  }) {
+    if (accuracyMeters > maxAcceptableAccuracyMeters) {
+      return false;
+    }
+    if (!isSampleOffRoute) {
+      _consecutiveOffRoute = 0;
+      return false;
+    }
+    _consecutiveOffRoute++;
+    return _consecutiveOffRoute >= consecutiveSamplesRequired;
+  }
 }

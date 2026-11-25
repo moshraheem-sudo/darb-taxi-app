@@ -145,6 +145,8 @@ class UserLocation {
     required this.latitude,
     required this.longitude,
     this.heading = 0,
+    this.speedMps = 0,
+    this.accuracyMeters = 0,
     this.address = '',
     this.updatedAt,
   });
@@ -152,6 +154,8 @@ class UserLocation {
   final double latitude;
   final double longitude;
   final double heading;
+  final double speedMps;
+  final double accuracyMeters;
   final String address;
   final DateTime? updatedAt;
 
@@ -159,6 +163,8 @@ class UserLocation {
     'lat': latitude,
     'lng': longitude,
     'heading': heading,
+    if (speedMps > 0) 'speed_mps': speedMps,
+    if (accuracyMeters > 0) 'accuracy_m': accuracyMeters,
     if (address.isNotEmpty) 'address': address,
     if (updatedAt != null) 'updated_at': updatedAt!.toIso8601String(),
   };
@@ -167,6 +173,8 @@ class UserLocation {
     latitude: (json['lat'] as num).toDouble(),
     longitude: (json['lng'] as num).toDouble(),
     heading: (json['heading'] as num?)?.toDouble() ?? 0,
+    speedMps: (json['speed_mps'] as num?)?.toDouble() ?? 0,
+    accuracyMeters: (json['accuracy_m'] as num?)?.toDouble() ?? 0,
     address: (json['address'] ?? '').toString(),
     updatedAt: DateTime.tryParse((json['updated_at'] ?? '').toString()),
   );
@@ -245,6 +253,9 @@ class TripRecord {
     required this.rideId,
     required this.passengerName,
     required this.captainName,
+    this.captainPhotoUrl,
+    this.captainCar,
+    this.captainRating,
     required this.originName,
     required this.destinationName,
     required this.fareIqd,
@@ -256,6 +267,9 @@ class TripRecord {
   final String rideId;
   final String passengerName;
   final String captainName;
+  final String? captainPhotoUrl;
+  final String? captainCar;
+  final double? captainRating;
   final String originName;
   final String destinationName;
   final int fareIqd;
@@ -267,6 +281,10 @@ class TripRecord {
     'ride_id': rideId,
     'passenger_name': passengerName,
     'captain_name': captainName,
+    if (captainPhotoUrl != null && captainPhotoUrl!.isNotEmpty)
+      'captain_photo_url': captainPhotoUrl,
+    if (captainCar != null && captainCar!.isNotEmpty) 'captain_car': captainCar,
+    if (captainRating != null) 'captain_rating': captainRating,
     'origin': originName,
     'destination': destinationName,
     'fare_iqd': fareIqd,
@@ -280,6 +298,9 @@ class TripRecord {
     passengerName: (json['passenger_name'] ?? 'زبون درب').toString(),
     captainName: (json['captain_name'] ?? json['driver'] ?? 'كابتن درب')
         .toString(),
+    captainPhotoUrl: json['captain_photo_url']?.toString(),
+    captainCar: json['captain_car']?.toString(),
+    captainRating: (json['captain_rating'] as num?)?.toDouble(),
     originName: (json['origin'] ?? '').toString(),
     destinationName: (json['destination'] ?? '').toString(),
     fareIqd: (json['fare_iqd'] ?? json['price'] as num?)?.toInt() ?? 0,
@@ -295,6 +316,8 @@ class CaptainProfile {
     this.id = '',
     this.fullName = '',
     this.phone = '',
+    this.photoUrl = '',
+    this.localPhotoPath = '',
     this.carModel = '',
     this.carColor = '',
     this.plateNumber = '',
@@ -310,6 +333,8 @@ class CaptainProfile {
   final String id;
   final String fullName;
   final String phone;
+  final String photoUrl;
+  final String localPhotoPath;
   final String carModel;
   final String carColor;
   final String plateNumber;
@@ -326,6 +351,9 @@ class CaptainProfile {
       carModel.trim().isNotEmpty &&
       plateNumber.trim().isNotEmpty;
 
+  bool get hasProfilePhoto =>
+      photoUrl.trim().isNotEmpty || localPhotoPath.trim().isNotEmpty;
+
   bool get hasAllDocuments =>
       documents.containsKey('nationalId') &&
       documents.containsKey('driverLicense') &&
@@ -336,6 +364,8 @@ class CaptainProfile {
     String? id,
     String? fullName,
     String? phone,
+    String? photoUrl,
+    String? localPhotoPath,
     String? carModel,
     String? carColor,
     String? plateNumber,
@@ -350,6 +380,8 @@ class CaptainProfile {
     id: id ?? this.id,
     fullName: fullName ?? this.fullName,
     phone: phone ?? this.phone,
+    photoUrl: photoUrl ?? this.photoUrl,
+    localPhotoPath: localPhotoPath ?? this.localPhotoPath,
     carModel: carModel ?? this.carModel,
     carColor: carColor ?? this.carColor,
     plateNumber: plateNumber ?? this.plateNumber,
@@ -366,6 +398,8 @@ class CaptainProfile {
     'id': id,
     'full_name': fullName,
     'phone': phone,
+    if (photoUrl.isNotEmpty) 'photo_url': photoUrl,
+    if (localPhotoPath.isNotEmpty) 'local_photo_path': localPhotoPath,
     'car_model': carModel,
     'car_color': carColor,
     'plate_number': plateNumber,
@@ -390,6 +424,8 @@ class CaptainProfile {
       id: (json['id'] ?? '').toString(),
       fullName: (json['full_name'] ?? '').toString(),
       phone: (json['phone'] ?? '').toString(),
+      photoUrl: (json['photo_url'] ?? '').toString(),
+      localPhotoPath: (json['local_photo_path'] ?? '').toString(),
       carModel: (json['car_model'] ?? '').toString(),
       carColor: (json['car_color'] ?? '').toString(),
       plateNumber: (json['plate_number'] ?? '').toString(),
@@ -436,6 +472,7 @@ class RideRequestPayload {
     this.captainCar,
     this.captainPlate,
     this.captainRating,
+    this.captainPhotoUrl,
     this.version = 1,
     required this.createdAt,
   });
@@ -468,6 +505,7 @@ class RideRequestPayload {
   final String? captainCar;
   final String? captainPlate;
   final double? captainRating;
+  final String? captainPhotoUrl;
   final int version;
   final DateTime createdAt;
 
@@ -479,6 +517,7 @@ class RideRequestPayload {
     String? captainCar,
     String? captainPlate,
     double? captainRating,
+    String? captainPhotoUrl,
     int? version,
   }) => RideRequestPayload(
     rideId: rideId,
@@ -509,6 +548,7 @@ class RideRequestPayload {
     captainCar: captainCar ?? this.captainCar,
     captainPlate: captainPlate ?? this.captainPlate,
     captainRating: captainRating ?? this.captainRating,
+    captainPhotoUrl: captainPhotoUrl ?? this.captainPhotoUrl,
     version: version ?? this.version,
     createdAt: createdAt,
   );
@@ -545,6 +585,8 @@ class RideRequestPayload {
     if (captainCar != null) 'captain_car': captainCar,
     if (captainPlate != null) 'captain_plate': captainPlate,
     if (captainRating != null) 'captain_rating': captainRating,
+    if (captainPhotoUrl != null && captainPhotoUrl!.isNotEmpty)
+      'captain_photo_url': captainPhotoUrl,
     'version': version,
     'created_at': createdAt.toIso8601String(),
   };
@@ -581,6 +623,7 @@ class RideRequestPayload {
         captainCar: json['captain_car']?.toString(),
         captainPlate: json['captain_plate']?.toString(),
         captainRating: (json['captain_rating'] as num?)?.toDouble(),
+        captainPhotoUrl: json['captain_photo_url']?.toString(),
         version: (json['version'] as num?)?.toInt() ?? 1,
         createdAt:
             DateTime.tryParse((json['created_at'] ?? '').toString()) ??

@@ -10,6 +10,10 @@
 	<string>درب</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>يستخدم درب موقعك لتحديد نقطة الانطلاق وحساب مسار الرحلة.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>يستخدم درب الكاميرا لالتقاط الصورة الشخصية للكابتن والتحقق منها.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>يستخدم درب مكتبة الصور لاختيار الصورة الشخصية للكابتن ومستمسكات التسجيل.</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

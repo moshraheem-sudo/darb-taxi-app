@@ -4,6 +4,7 @@ import 'package:car/pages/captain_pages.dart';
 import 'package:car/pages/incoming_location_page.dart';
 import 'package:car/pages/safety_page.dart';
 import 'package:car/services/captain_navigation_service.dart';
+import 'package:car/services/captain_photo_service.dart';
 import 'package:car/services/iraqi_navigation_service.dart';
 import 'package:car/services/map_link_parser.dart';
 import 'package:car/services/ride_backend_service.dart';
@@ -334,6 +335,8 @@ void main() {
     SharedPreferences.setMockInitialValues({
       'passenger_logged_in': true,
       'darb_user_role': 'captain',
+      'darb_captain_profile_v1':
+          '{"id":"cap_1","full_name":"كابتن اختبار","car_model":"Kia Optima","plate_number":"1234","photo_url":"https://cdn.darb.iq/cap.jpg"}',
     });
     await tester.pumpWidget(
       const MaterialApp(
@@ -743,6 +746,82 @@ void main() {
     expect(setDestCalled, isTrue);
     expect(setBothCalled, isFalse);
   });
+
+  test('CaptainNavigationService speedKmh & OffRouteDetector filter GPS noise', () {
+    expect(CaptainNavigationService.speedKmh(0.4), 0);
+    expect(CaptainNavigationService.speedKmh(10.0), 36);
+
+    final detector = OffRouteDetector(
+      maxAcceptableAccuracyMeters: 45,
+      consecutiveSamplesRequired: 2,
+    );
+    // Low-accuracy sample should never trigger reroute
+    expect(detector.evaluate(isSampleOffRoute: true, accuracyMeters: 80), isFalse);
+    // Single accurate off-route sample should not trigger reroute yet
+    expect(detector.evaluate(isSampleOffRoute: true, accuracyMeters: 10), isFalse);
+    // Second consecutive accurate off-route sample confirms reroute
+    expect(detector.evaluate(isSampleOffRoute: true, accuracyMeters: 10), isTrue);
+    // Back on route resets
+    expect(detector.evaluate(isSampleOffRoute: false, accuracyMeters: 10), isFalse);
+    expect(detector.evaluate(isSampleOffRoute: true, accuracyMeters: 10), isFalse);
+  });
+
+  test('CaptainPhotoService validates single clear face & remote URLs only', () {
+    expect(CaptainPhotoService.isRemotePhotoUrl('/data/user/0/photo.jpg'), isFalse);
+    expect(CaptainPhotoService.isRemotePhotoUrl('https://cdn.darb.iq/c1.jpg'), isTrue);
+
+    expect(CaptainPhotoService.validateFaceMetrics(faceCount: 0).isValid, isFalse);
+    expect(CaptainPhotoService.validateFaceMetrics(faceCount: 2).isValid, isFalse);
+    expect(
+      CaptainPhotoService.validateFaceMetrics(faceCount: 1, faceAreaRatio: 0.02).isValid,
+      isFalse,
+    );
+    expect(
+      CaptainPhotoService.validateFaceMetrics(
+        faceCount: 1,
+        faceAreaRatio: 0.25,
+        filePath: '/tmp/face.jpg',
+      ).isValid,
+      isTrue,
+    );
+
+    const profile = CaptainProfile(fullName: 'أحمد', carModel: 'Optima', plateNumber: '1234');
+    expect(profile.hasProfilePhoto, isFalse);
+    expect(profile.copyWith(localPhotoPath: '/tmp/face.jpg').hasProfilePhoto, isTrue);
+  });
+
+  testWidgets('CaptainOnboardingPage shows mandatory photo section & blocks save without photo', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Directionality(
+          textDirection: TextDirection.rtl,
+          child: CaptainOnboardingPage(),
+        ),
+      ),
+    );
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 80)));
+    await tester.pump();
+
+    expect(find.text('الصورة الشخصية للكابتن'), findsOneWidget);
+    expect(find.text('الكاميرا'), findsOneWidget);
+    expect(find.text('المعرض'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).at(0), 'كابتن علي');
+    await tester.enterText(find.byType(TextField).at(2), 'Kia Optima');
+    await tester.enterText(find.byType(TextField).at(4), 'بغداد 12345');
+    await tester.tap(find.text('حفظ وإرسال للموافقة'));
+    await tester.pump();
+
+    expect(find.text('يرجى التقاط أو اختيار الصورة الشخصية للكابتن أولاً.'), findsOneWidget);
+  });
 }
 
 class _FakeRedirectAdapter implements HttpClientAdapter {
@@ -768,3 +847,4 @@ class _FakeRedirectAdapter implements HttpClientAdapter {
     return ResponseBody.fromString('', 404);
   }
 }
+

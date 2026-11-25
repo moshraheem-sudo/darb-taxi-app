@@ -95,6 +95,16 @@ class NotificationCenterService {
           enableVibration: true,
         ),
       );
+      await android.createNotificationChannel(
+        const AndroidNotificationChannel(
+          'darb_captain_nav',
+          'الملاحة النشطة للكابتن',
+          description: 'إشعار مستمر لعرض حالة الملاحة أثناء الرحلة',
+          importance: Importance.low,
+          playSound: false,
+          enableVibration: false,
+        ),
+      );
     }
   }
 
@@ -242,6 +252,42 @@ class NotificationCenterService {
         .map((item) => jsonEncode(item.copy(read: true).toJson()))
         .toList();
     await prefs.setStringList(_storageKey, entries);
+  }
+
+  static const int _navNotificationId = 9001;
+
+  static Future<void> showOngoingNavigationNotification({
+    required String title,
+    required String body,
+  }) async {
+    try {
+      await _plugin.show(
+        _navNotificationId,
+        title,
+        body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'darb_captain_nav',
+            'الملاحة النشطة للكابتن',
+            channelDescription: 'إشعار مستمر لعرض حالة الملاحة أثناء الرحلة',
+            importance: Importance.low,
+            priority: Priority.low,
+            ongoing: true,
+            onlyAlertOnce: true,
+            playSound: false,
+            enableVibration: false,
+            icon: 'ic_stat_darb',
+          ),
+          iOS: DarwinNotificationDetails(presentSound: false),
+        ),
+      );
+    } catch (_) {}
+  }
+
+  static Future<void> cancelOngoingNavigationNotification() async {
+    try {
+      await _plugin.cancel(_navNotificationId);
+    } catch (_) {}
   }
 }
 
