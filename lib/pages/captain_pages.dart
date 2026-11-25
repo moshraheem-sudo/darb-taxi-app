@@ -1037,6 +1037,32 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
     );
   }
 
+  Future<void> _confirmCancelActiveRide() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('إلغاء الرحلة الحالية؟'),
+        content: const Text(
+          'سيتم إشعار الزبون بإلغاء الرحلة وإغلاق الطلب الحالي.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('تراجع'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('تأكيد الإلغاء'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _advanceRideStatus(RideDispatchStatus.cancelled);
+    }
+  }
+
   Widget _buildActiveRideCard(
     RideRequestPayload ride,
     Color surface,
@@ -1109,9 +1135,29 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
                 ),
               ],
             ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: ride.status == RideDispatchStatus.inProgress
+                    ? 1.0
+                    : (ride.status == RideDispatchStatus.arrived ? 0.66 : 0.33),
+                minHeight: 5,
+                backgroundColor: secondaryText.withValues(alpha: 0.15),
+                color: ride.status == RideDispatchStatus.inProgress
+                    ? _captainGreen
+                    : _captainBlue,
+              ),
+            ),
             const SizedBox(height: 12),
             Row(
               children: [
+                CircleAvatar(
+                  radius: 20,
+                  backgroundColor: _captainGreen.withValues(alpha: 0.12),
+                  child: const Icon(Icons.person_outline, color: _captainGreen),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1119,16 +1165,47 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
                       Text(
                         ride.passengerName,
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 15.5,
                           fontWeight: FontWeight.bold,
                           color: primaryText,
                         ),
                       ),
-                      Text(
-                        '${ride.originName} -> ${ride.destinationName}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 13, color: secondaryText),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.trip_origin,
+                            size: 13,
+                            color: Color(0xFFE56A2B),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              ride.originName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 12.5, color: secondaryText),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.flag_rounded,
+                            size: 13,
+                            color: _captainBlue,
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              ride.destinationName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 12.5, color: secondaryText),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -1161,11 +1238,7 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
                 )) ...[
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: _busy
-                          ? null
-                          : () => _advanceRideStatus(
-                              RideDispatchStatus.cancelled,
-                            ),
+                      onPressed: _busy ? null : _confirmCancelActiveRide,
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.redAccent,
                         minimumSize: const Size.fromHeight(50),
@@ -1427,11 +1500,35 @@ class _CaptainOnboardingPageState extends State<CaptainOnboardingPage> {
                   },
                 ),
                 const SizedBox(height: 18),
-                const Text(
-                  'المستمسكات المطلوبة',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                Row(
+                  children: [
+                    const Text(
+                      'المستمسكات المطلوبة',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${_profile.documents.length} / ${docItems.length} مرفوع',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: _profile.hasAllDocuments
+                            ? _captainGreen
+                            : const Color(0xFFE56A2B),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: (_profile.documents.length / docItems.length).clamp(0.0, 1.0),
+                    minHeight: 5,
+                    color: _profile.hasAllDocuments ? _captainGreen : _captainBlue,
+                  ),
+                ),
+                const SizedBox(height: 10),
                 ...docItems.map((item) {
                   final path = _profile.documents[item.$1];
                   final attached = path != null && path.isNotEmpty;

@@ -18,7 +18,9 @@ import 'pages/captain_pages.dart';
 import 'services/notification_center.dart';
 import 'services/passenger_api.dart';
 import 'services/ride_backend_service.dart';
+import 'theme/darb_theme.dart';
 import 'widgets/car_graphic.dart';
+import 'widgets/darb_components.dart';
 import 'widgets/ride_sheets.dart';
 
 void main() {
@@ -774,62 +776,7 @@ class _RideAppState extends State<RideApp> {
     ),
   );
 
-  ThemeData _theme(bool dark) => ThemeData(
-    useMaterial3: true,
-    brightness: dark ? Brightness.dark : Brightness.light,
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: green,
-      brightness: dark ? Brightness.dark : Brightness.light,
-      surface: dark ? const Color(0xFF17211F) : const Color(0xFFF8FAF9),
-      surfaceContainerHighest: dark
-          ? const Color(0xFF22312E)
-          : const Color(0xFFEFF3F1),
-    ),
-    scaffoldBackgroundColor: dark ? const Color(0xFF101A18) : canvas,
-    cardColor: dark ? const Color(0xFF182522) : Colors.white,
-    canvasColor: dark ? const Color(0xFF101A18) : canvas,
-    dividerColor: dark ? const Color(0xFF30413D) : const Color(0xFFE6EAE8),
-    appBarTheme: AppBarTheme(
-      backgroundColor: dark ? const Color(0xFF101A18) : Colors.white,
-      foregroundColor: dark ? Colors.white : ink,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-    ),
-    cardTheme: CardThemeData(
-      color: dark ? const Color(0xFF182522) : Colors.white,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      margin: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: dark ? const Color(0xFF30413D) : const Color(0xFFE6EAE8),
-        ),
-      ),
-    ),
-    inputDecorationTheme: InputDecorationTheme(
-      filled: true,
-      fillColor: dark ? const Color(0xFF22312E) : const Color(0xFFF7F8FA),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(
-          color: dark ? const Color(0xFF30413D) : const Color(0xFFE2E5E4),
-        ),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(
-          color: dark ? const Color(0xFF30413D) : const Color(0xFFE2E5E4),
-        ),
-      ),
-    ),
-    dialogTheme: DialogThemeData(
-      backgroundColor: dark ? const Color(0xFF182522) : Colors.white,
-      surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-    ),
-    fontFamily: 'Arial',
-  );
+  ThemeData _theme(bool dark) => DarbTheme.build(dark);
 }
 
 class HomePage extends StatefulWidget {
@@ -1926,6 +1873,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                   ),
                                 ),
                               ),
+                              const SizedBox(height: 4),
+                              DarbPinGroundShadow(lifted: _isMapMoving),
                               const SizedBox(height: 2),
                             ],
                             Icon(
@@ -2927,14 +2876,32 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 8),
-            const SizedBox.square(
-              dimension: 52,
-              child: CircularProgressIndicator(
-                strokeWidth: 4,
-                valueColor: AlwaysStoppedAnimation(Color(0xFF0038FF)),
-              ),
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  width: 78,
+                  height: 78,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF0038FF).withValues(alpha: 0.08),
+                  ),
+                ),
+                const SizedBox.square(
+                  dimension: 58,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 4,
+                    valueColor: AlwaysStoppedAnimation(Color(0xFF0038FF)),
+                  ),
+                ),
+                const Icon(
+                  Icons.local_taxi_rounded,
+                  color: Color(0xFF0038FF),
+                  size: 24,
+                ),
+              ],
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
             const Text(
               'جارٍ البحث عن أقرب كابتن...',
               style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
@@ -2944,11 +2911,47 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               'نبحث عن أفضل سيارة متوفرة بالقرب من ${state.originName}',
               textAlign: TextAlign.center,
               style: TextStyle(
-                fontSize: 14,
+                fontSize: 13.5,
                 color: state.dark ? Colors.white70 : Colors.grey.shade600,
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: state.dark
+                    ? const Color(0xFF22322E)
+                    : const Color(0xFFF3F6F9),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.route_outlined, size: 17, color: green),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${state.originName}  ←  ${state.destinationName}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    formatIraqiDinar(context.read<RideCubit>().currentPrice),
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF0038FF),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
             OutlinedButton(
               onPressed: _cancelRide,
               style: OutlinedButton.styleFrom(
@@ -3040,7 +3043,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: isEnRoute ? 1.0 : (isArrived ? 0.66 : 0.33),
+                minHeight: 5,
+                backgroundColor: state.dark
+                    ? const Color(0xFF263531)
+                    : const Color(0xFFE7ECF6),
+                color: isEnRoute ? green : const Color(0xFF194BFB),
+              ),
+            ),
+            const SizedBox(height: 12),
 
             if (route != null)
               Container(
@@ -4110,33 +4125,79 @@ class _HistoryPageState extends State<HistoryPage> {
                 final dateLabel = date == null
                     ? ''
                     : '${date.year}/${date.month.toString().padLeft(2, '0')}/${date.day.toString().padLeft(2, '0')}  ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+                final fareVal = (ride['fare_iqd'] ?? ride['price'] as num?)?.toInt();
+                final kmVal = ride['distance_km'] ?? ride['kilometers'];
+                final captainLabel = ride['captain_name'] ?? ride['driver'] ?? 'الكابتن';
                 return Card(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
                   child: Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(14),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.route_outlined, color: green),
+                            const Icon(Icons.trip_origin, size: 16, color: Color(0xFFE56A2B)),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                '${ride['origin'] ?? 'الانطلاق'}  ←  ${ride['destination'] ?? 'الوصول'}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
+                                '${ride['origin'] ?? 'الانطلاق'}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                            if (fareVal != null)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
                                 ),
+                                decoration: BoxDecoration(
+                                  color: green.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  formatIraqiDinar(fareVal),
+                                  style: const TextStyle(
+                                    color: green,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 12.5,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Icon(Icons.flag_rounded, size: 16, color: Color(0xFF0038FF)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '${ride['destination'] ?? 'الوصول'}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontWeight: FontWeight.w700),
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 7),
+                        const SizedBox(height: 8),
                         Text(
-                          '${ride['driver'] ?? 'الكابتن'} • ${ride['car'] ?? 'السيارة'}',
+                          '$captainLabel${ride['car'] != null ? ' • ${ride['car']}' : ''}',
+                          style: const TextStyle(fontSize: 13),
                         ),
-                        Text(
-                          '$dateLabel • ${ride['price'] ?? '—'} د.ع${ride['kilometers'] == null ? '' : ' • ${ride['kilometers']} كم'}',
-                        ),
+                        if (dateLabel.isNotEmpty || kmVal != null)
+                          Text(
+                            '$dateLabel${kmVal == null ? '' : ' • $kmVal كم'}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
                         const SizedBox(height: 8),
                         Align(
                           alignment: AlignmentDirectional.centerEnd,
@@ -4146,7 +4207,7 @@ class _HistoryPageState extends State<HistoryPage> {
                               extra: {
                                 'category': 'شكوى على السائق',
                                 'details':
-                                    'شكوى بخصوص الرحلة ${ride['id']} بتاريخ $dateLabel.\n\n',
+                                    'شكوى بخصوص الرحلة ${ride['ride_id'] ?? ride['id']} بتاريخ $dateLabel.\n\n',
                               },
                             ),
                             icon: const Icon(
@@ -4594,83 +4655,147 @@ class _PassengerLoginPageState extends State<PassengerLoginPage> {
     final secondaryText = dark ? Colors.white70 : const Color(0xFF5A6562);
     final cardBg = dark ? const Color(0xFF182522) : Colors.white;
 
+    final accent = _selectedRole == UserRole.captain
+        ? const Color(0xFF0038FF)
+        : green;
+
     return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(22, 18, 22, 28),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Align(
-                alignment: AlignmentDirectional.centerEnd,
-                child: IconButton.filledTonal(
-                  tooltip: dark ? 'الوضع النهاري' : 'الوضع الليلي',
-                  onPressed: () => context.read<RideCubit>().toggleTheme(),
-                  icon: Icon(
-                    dark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 14,
-                  ),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [green, Color(0xFF0A9D7D)],
-                      begin: Alignment.topRight,
-                      end: Alignment.bottomLeft,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: dark
+                ? [const Color(0xFF0D1715), const Color(0xFF121E1B)]
+                : [const Color(0xFFF3F8F6), Colors.white],
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(22, 16, 22, 28),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          child: Container(
+                            key: ValueKey(_selectedRole),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: accent.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _selectedRole == UserRole.captain
+                                      ? Icons.local_taxi_rounded
+                                      : Icons.verified_user_outlined,
+                                  size: 16,
+                                  color: accent,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  _selectedRole == UserRole.captain
+                                      ? 'بوابة الكابتن'
+                                      : 'بوابة الزبون',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                    color: accent,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        IconButton.filledTonal(
+                          tooltip: dark ? 'الوضع النهاري' : 'الوضع الليلي',
+                          onPressed: () =>
+                              context.read<RideCubit>().toggleTheme(),
+                          icon: Icon(
+                            dark
+                                ? Icons.light_mode_outlined
+                                : Icons.dark_mode_outlined,
+                          ),
+                        ),
+                      ],
                     ),
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: green.withValues(alpha: 0.28),
-                        blurRadius: 18,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: const Column(
-                    children: [
-                      Icon(Icons.directions_car_filled_rounded,
-                          color: Colors.white, size: 42),
-                      SizedBox(height: 6),
-                      Text(
-                        'درب',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 26,
-                          fontWeight: FontWeight.w900,
+                    const SizedBox(height: 12),
+                    Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 22,
+                          vertical: 14,
+                        ),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: _selectedRole == UserRole.captain
+                                ? const [Color(0xFF0038FF), Color(0xFF1E6BFF)]
+                                : const [green, Color(0xFF0A9D7D)],
+                            begin: Alignment.topRight,
+                            end: Alignment.bottomLeft,
+                          ),
+                          borderRadius: BorderRadius.circular(24),
+                          boxShadow: [
+                            BoxShadow(
+                              color: accent.withValues(alpha: 0.28),
+                              blurRadius: 18,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: const Column(
+                          children: [
+                            Icon(
+                              Icons.directions_car_filled_rounded,
+                              color: Colors.white,
+                              size: 40,
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'درب',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 26,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                _codeRequested
-                    ? 'تحقق من رقمك'
-                    : (_isSignup ? 'إنشاء حساب جديد' : 'تسجيل الدخول'),
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                  color: primaryText,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _codeRequested
-                    ? 'أدخل رمز SMS الذي أرسله الخادم إلى $_internationalPhone'
-                    : 'أهلاً بك في درب — تنقّل بسهولة وأمان داخل العراق',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: secondaryText),
-              ),
-              const SizedBox(height: 18),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      _codeRequested
+                          ? 'تحقق من رقمك'
+                          : (_isSignup ? 'إنشاء حساب جديد' : 'تسجيل الدخول'),
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        color: primaryText,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _codeRequested
+                          ? 'أدخل رمز SMS الذي أرسله الخادم إلى $_internationalPhone'
+                          : 'أهلاً بك في درب — تنقّل بسهولة وأمان داخل العراق',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 14, color: secondaryText),
+                    ),
+                    const SizedBox(height: 18),
 
               // Unified Account Type Selector: الدخول كزبون | الدخول ككابتن
               if (!_codeRequested) ...[
@@ -4726,7 +4851,8 @@ class _PassengerLoginPageState extends State<PassengerLoginPage> {
                             _isSignup = false;
                             _error = null;
                           }),
-                          child: Container(
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 220),
                             padding: const EdgeInsets.symmetric(vertical: 11),
                             decoration: BoxDecoration(
                               color: !_isSignup ? cardBg : Colors.transparent,
@@ -4759,7 +4885,8 @@ class _PassengerLoginPageState extends State<PassengerLoginPage> {
                             _isSignup = true;
                             _error = null;
                           }),
-                          child: Container(
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 220),
                             padding: const EdgeInsets.symmetric(vertical: 11),
                             decoration: BoxDecoration(
                               color: _isSignup ? cardBg : Colors.transparent,
@@ -4873,14 +5000,38 @@ class _PassengerLoginPageState extends State<PassengerLoginPage> {
                       ),
                     ],
                     if (_error != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 10),
-                        child: Text(
-                          _error!,
-                          style: const TextStyle(
-                            color: Colors.redAccent,
-                            fontSize: 13,
+                      Container(
+                        margin: const EdgeInsets.only(top: 12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.redAccent.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.redAccent.withValues(alpha: 0.35),
                           ),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.error_outline_rounded,
+                              color: Colors.redAccent,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _error!,
+                                style: const TextStyle(
+                                  color: Colors.redAccent,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     const SizedBox(height: 18),
@@ -4889,7 +5040,7 @@ class _PassengerLoginPageState extends State<PassengerLoginPage> {
                           ? null
                           : (_codeRequested ? _verify : _requestCode),
                       style: FilledButton.styleFrom(
-                        backgroundColor: green,
+                        backgroundColor: accent,
                         foregroundColor: Colors.white,
                         minimumSize: const Size.fromHeight(52),
                         shape: RoundedRectangleBorder(
@@ -4998,7 +5149,10 @@ class _PassengerLoginPageState extends State<PassengerLoginPage> {
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: secondaryText),
               ),
-            ],
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
       ),
