@@ -47,6 +47,10 @@ const ink = Color(0xFF142421);
 const canvas = Color(0xFFF5F6F2);
 final passengerLoggedIn = ValueNotifier<bool>(false);
 final currentUserRole = ValueNotifier<UserRole>(UserRole.passenger);
+String get savedPlacesStorageKey =>
+    currentUserRole.value == UserRole.captain
+        ? 'darb_saved_places_captain_v1'
+        : 'darb_saved_places';
 
 class Place {
   const Place(this.name, this.detail, this.point);
@@ -787,12 +791,12 @@ final router = GoRouter(
                 }
               : null,
           onViewOnMap: () {
-            if (!isRideActive && cubit.state.destination == null) {
-              cubit.setMapDestination(
-                LatLng(extra.latitude, extra.longitude),
-                name: extra.placeName ?? extra.address,
-              );
-            }
+            final target = LatLng(extra.latitude, extra.longitude);
+            focusedMapPin.value = FocusedMapPin(
+              target,
+              label: extra.placeName ?? extra.address ?? 'الموقع المحدد',
+            );
+            cubit.focusOnPoint(target);
             context.go('/');
           },
         );
@@ -1915,6 +1919,51 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         title: 'الوجهة الثانية',
                         pinColor: Color(0xFF8E24AA),
                         isSquare: true,
+                      ),
+                    ),
+                  if (focusedMapPin.value != null)
+                    Marker(
+                      point: focusedMapPin.value!.point,
+                      width: 140,
+                      height: 82,
+                      rotate: true,
+                      alignment: Alignment.topCenter,
+                      child: GestureDetector(
+                        onTap: () => focusedMapPin.value = null,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (focusedMapPin.value!.label.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFEA4335),
+                                  borderRadius: BorderRadius.circular(10),
+                                  boxShadow: const [
+                                    BoxShadow(color: Colors.black26, blurRadius: 4),
+                                  ],
+                                ),
+                                child: Text(
+                                  focusedMapPin.value!.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            const Icon(
+                              Icons.location_on,
+                              color: Color(0xFFEA4335),
+                              size: 46,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   for (final place in _savedPlaces)
@@ -3966,7 +4015,7 @@ class _FavoritePlacesPageState extends State<FavoritePlacesPage> {
 
   Future<void> _load() async {
     final preferences = await SharedPreferences.getInstance();
-    final raw = preferences.getString('darb_saved_places');
+    final raw = preferences.getString(savedPlacesStorageKey);
     if (!mounted) return;
     setState(() {
       _places = raw == null
@@ -3983,7 +4032,7 @@ class _FavoritePlacesPageState extends State<FavoritePlacesPage> {
     final preferences = await SharedPreferences.getInstance();
     _places.removeWhere((item) => item.point == place.point);
     await preferences.setString(
-      'darb_saved_places',
+      savedPlacesStorageKey,
       jsonEncode(_places.map((item) => item.toJson()).toList()),
     );
     if (mounted) setState(() {});
@@ -4050,6 +4099,10 @@ class _FavoritePlacesPageState extends State<FavoritePlacesPage> {
                                 title: const Text('الذهاب إلى الموقع'),
                                 onTap: () {
                                   Navigator.pop(sheetContext);
+                                  focusedMapPin.value = FocusedMapPin(
+                                    place.point,
+                                    label: place.name,
+                                  );
                                   context.read<RideCubit>().focusOnPoint(
                                     place.point,
                                   );

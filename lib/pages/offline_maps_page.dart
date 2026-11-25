@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
 
 import '../services/offline_maps_service.dart';
 
@@ -14,8 +12,6 @@ class OfflineMapsPage extends StatefulWidget {
 class _OfflineMapsPageState extends State<OfflineMapsPage> {
   static const _green = Color(0xFF087F65);
 
-  bool _mapTab = false;
-  String? _selectedRegionId = 'wasit';
   String? _downloadingRegionId;
   double _downloadProgress = 0;
   bool _cancelRequested = false;
@@ -94,10 +90,6 @@ class _OfflineMapsPageState extends State<OfflineMapsPage> {
     final cs = theme.colorScheme;
     final allIraq = OfflineMapsService.regions.first;
     final governorates = OfflineMapsService.regions.skip(1).toList();
-    final selectedRegion = OfflineMapsService.regions.firstWhere(
-      (r) => r.id == _selectedRegionId,
-      orElse: () => governorates.first,
-    );
 
     return Scaffold(
       appBar: AppBar(
@@ -148,211 +140,15 @@ class _OfflineMapsPageState extends State<OfflineMapsPage> {
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment(
-                    value: false,
-                    icon: Icon(Icons.list_rounded),
-                    label: Text('قائمة'),
-                  ),
-                  ButtonSegment(
-                    value: true,
-                    icon: Icon(Icons.public_rounded),
-                    label: Text('خريطة'),
-                  ),
-                ],
-                selected: {_mapTab},
-                onSelectionChanged: (s) => setState(() => _mapTab = s.first),
-              ),
-            ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 4),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
-                  : _mapTab
-                      ? _buildIraqMapTab(
-                          governorates,
-                          allIraq,
-                          selectedRegion,
-                          dark,
-                        )
-                      : _buildListTab(allIraq, governorates, theme, cs),
+                  : _buildListTab(allIraq, governorates, theme, cs),
             ),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildIraqMapTab(
-    List<IraqRegion> governorates,
-    IraqRegion allIraq,
-    IraqRegion selectedRegion,
-    bool dark,
-  ) {
-    final isDownloaded = _downloaded.containsKey(selectedRegion.id);
-    final isDownloading = _downloadingRegionId == selectedRegion.id;
-    return Column(
-      children: [
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: FlutterMap(
-                options: const MapOptions(
-                  initialCenter: LatLng(33.22, 43.68),
-                  initialZoom: 5.5,
-                ),
-                children: [
-                  TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'iq.ridepassenger.car',
-                    tileProvider: DarbOfflineTileProvider(),
-                    tileBuilder: dark ? darkModeTileBuilder : null,
-                  ),
-                  PolygonLayer(
-                    polygons: [
-                      for (final gov in governorates)
-                        Polygon(
-                          points: gov.boxPolygon,
-                          color: gov.id == _selectedRegionId
-                              ? _green.withValues(alpha: 0.42)
-                              : (_downloaded.containsKey(gov.id)
-                                  ? _green.withValues(alpha: 0.22)
-                                  : Colors.teal.withValues(alpha: 0.14)),
-                          borderColor: gov.id == _selectedRegionId
-                              ? _green
-                              : Colors.teal.shade700,
-                          borderStrokeWidth:
-                              gov.id == _selectedRegionId ? 2.5 : 1.0,
-                        ),
-                    ],
-                  ),
-                  MarkerLayer(
-                    markers: [
-                      for (final gov in governorates)
-                        Marker(
-                          point: gov.center,
-                          width: 82,
-                          height: 30,
-                          child: GestureDetector(
-                            onTap: () =>
-                                setState(() => _selectedRegionId = gov.id),
-                            child: Center(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: gov.id == _selectedRegionId
-                                      ? _green
-                                      : Colors.black.withValues(alpha: 0.65),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  gov.nameAr,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              selectedRegion.nameAr,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            Text(
-                              'الحجم التقديري: ${OfflineMapsService.estimateSizeMb(selectedRegion).toStringAsFixed(1)} MB',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey.shade600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (isDownloading)
-                        SizedBox(
-                          width: 28,
-                          height: 28,
-                          child: CircularProgressIndicator(
-                            value: _downloadProgress,
-                            strokeWidth: 3,
-                          ),
-                        )
-                      else if (isDownloaded)
-                        IconButton(
-                          tooltip: 'حذف الخريطة',
-                          onPressed: () => _delete(selectedRegion),
-                          icon: const Icon(Icons.delete_outline,
-                              color: Colors.redAccent),
-                        ),
-                      const SizedBox(width: 6),
-                      FilledButton.icon(
-                        onPressed: _downloadingRegionId != null
-                            ? null
-                            : () => _download(selectedRegion),
-                        style: FilledButton.styleFrom(backgroundColor: _green),
-                        icon: Icon(
-                          isDownloaded
-                              ? Icons.refresh_rounded
-                              : Icons.download_rounded,
-                        ),
-                        label: Text(isDownloaded ? 'تحديث' : 'تحميل'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: _downloadingRegionId != null
-                        ? null
-                        : () => _download(allIraq),
-                    icon: const Icon(Icons.public_rounded),
-                    label: Text(
-                      'تحميل خريطة كل العراق (${OfflineMapsService.estimateSizeMb(allIraq).toStringAsFixed(1)} MB)',
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 

@@ -1,3 +1,15 @@
+import 'package:flutter/foundation.dart';
+import 'package:latlong2/latlong.dart';
+
+class FocusedMapPin {
+  const FocusedMapPin(this.point, {this.label = ''});
+  final LatLng point;
+  final String label;
+}
+
+final ValueNotifier<FocusedMapPin?> focusedMapPin =
+    ValueNotifier<FocusedMapPin?>(null);
+
 enum UserRole { passenger, captain }
 
 enum CaptainApprovalStatus { unsubmitted, pending, approved, rejected }

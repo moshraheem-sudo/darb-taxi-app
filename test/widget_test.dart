@@ -900,10 +900,15 @@ void main() {
     expect(find.text('كل العراق'), findsOneWidget);
     expect(find.text('بغداد'), findsOneWidget);
     expect(find.text('واسط'), findsOneWidget);
+    expect(find.text('خريطة'), findsNothing);
+  });
 
-    await tester.tap(find.text('خريطة'));
-    await tester.pump();
-    expect(find.byType(FlutterMap), findsOneWidget);
+  test('savedPlacesStorageKey separates passenger and captain favorites', () {
+    currentUserRole.value = UserRole.passenger;
+    expect(savedPlacesStorageKey, 'darb_saved_places');
+    currentUserRole.value = UserRole.captain;
+    expect(savedPlacesStorageKey, 'darb_saved_places_captain_v1');
+    currentUserRole.value = UserRole.passenger;
   });
 }
 

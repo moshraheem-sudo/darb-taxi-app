@@ -103,7 +103,18 @@ class _CaptainHomePageState extends State<CaptainHomePage>
   void initState() {
     super.initState();
     _navAnimController.addListener(_onNavAnimationTick);
+    focusedMapPin.addListener(_onFocusedMapPinChanged);
     _initCaptain();
+  }
+
+  void _onFocusedMapPinChanged() {
+    if (!mounted) return;
+    final pin = focusedMapPin.value;
+    if (pin != null && _mapReady) {
+      _followCamera = false;
+      _map.move(pin.point, 16.5);
+    }
+    setState(() {});
   }
 
   void _onNavAnimationTick() {
@@ -232,6 +243,7 @@ class _CaptainHomePageState extends State<CaptainHomePage>
 
   @override
   void dispose() {
+    focusedMapPin.removeListener(_onFocusedMapPinChanged);
     _navAnimController.removeListener(_onNavAnimationTick);
     _navAnimController.dispose();
     _requestCountdownTimer?.cancel();
@@ -1002,6 +1014,51 @@ class _CaptainHomePageState extends State<CaptainHomePage>
                 ),
               MarkerLayer(
                 markers: [
+                  if (focusedMapPin.value != null)
+                    Marker(
+                      point: focusedMapPin.value!.point,
+                      width: 140,
+                      height: 82,
+                      rotate: true,
+                      alignment: Alignment.topCenter,
+                      child: GestureDetector(
+                        onTap: () => focusedMapPin.value = null,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (focusedMapPin.value!.label.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFEA4335),
+                                  borderRadius: BorderRadius.circular(10),
+                                  boxShadow: const [
+                                    BoxShadow(color: Colors.black26, blurRadius: 4),
+                                  ],
+                                ),
+                                child: Text(
+                                  focusedMapPin.value!.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            const Icon(
+                              Icons.location_on,
+                              color: Color(0xFFEA4335),
+                              size: 46,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   Marker(
                     point: _captainPosition,
                     width: 48,
