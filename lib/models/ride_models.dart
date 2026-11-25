@@ -10,6 +10,9 @@ class FocusedMapPin {
 final ValueNotifier<FocusedMapPin?> focusedMapPin =
     ValueNotifier<FocusedMapPin?>(null);
 
+final ValueNotifier<FocusedMapPin?> captainIncomingDestination =
+    ValueNotifier<FocusedMapPin?>(null);
+
 enum UserRole { passenger, captain }
 
 enum CaptainApprovalStatus { unsubmitted, pending, approved, rejected }

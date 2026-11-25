@@ -758,35 +758,59 @@ final router = GoRouter(
         if (extra is! ParsedMapLocation) {
           return const HomePage();
         }
+        final isCaptain = currentUserRole.value == UserRole.captain;
         final cubit = context.read<RideCubit>();
         final isRideActive = cubit.state.rideStatus != RideBookingStatus.idle;
         return IncomingLocationPage(
           location: extra,
           isRideActive: isRideActive,
           onSetDestination: () {
-            cubit.setMapDestination(
-              LatLng(extra.latitude, extra.longitude),
-              name: extra.placeName ?? extra.address,
-            );
+            final target = LatLng(extra.latitude, extra.longitude);
+            final label = extra.placeName ?? extra.address ?? 'وجهة مشتركة';
+            focusedMapPin.value = null;
+            if (isCaptain) {
+              captainIncomingDestination.value = FocusedMapPin(
+                target,
+                label: label,
+              );
+            } else {
+              cubit.setMapDestination(target, name: label);
+              cubit.focusOnPoint(target);
+            }
             context.go('/');
           },
           onSetOrigin: () {
-            cubit.setOriginPoint(
-              LatLng(extra.latitude, extra.longitude),
-              name: extra.placeName ?? extra.address,
-            );
+            final target = LatLng(extra.latitude, extra.longitude);
+            final label = extra.placeName ?? extra.address ?? 'نقطة انطلاق';
+            if (isCaptain) {
+              focusedMapPin.value = FocusedMapPin(target, label: label);
+            } else {
+              focusedMapPin.value = null;
+              cubit.setOriginPoint(target, name: label);
+              cubit.focusOnPoint(target);
+            }
             context.go('/');
           },
           onSetBoth: extra.hasDirections
               ? () {
-                  cubit.setOriginPoint(
-                    LatLng(extra.originLatitude!, extra.originLongitude!),
-                    name: extra.originName,
+                  final origin = LatLng(
+                    extra.originLatitude!,
+                    extra.originLongitude!,
                   );
-                  cubit.setMapDestination(
-                    LatLng(extra.latitude, extra.longitude),
-                    name: extra.placeName ?? extra.address,
-                  );
+                  final dest = LatLng(extra.latitude, extra.longitude);
+                  focusedMapPin.value = null;
+                  if (isCaptain) {
+                    captainIncomingDestination.value = FocusedMapPin(
+                      dest,
+                      label: extra.placeName ?? extra.address ?? 'وجهة مشتركة',
+                    );
+                  } else {
+                    cubit.setOriginPoint(origin, name: extra.originName);
+                    cubit.setMapDestination(
+                      dest,
+                      name: extra.placeName ?? extra.address,
+                    );
+                  }
                   context.go('/');
                 }
               : null,
@@ -1455,9 +1479,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   void _confirmPoint(LatLng point) {
     final cubit = context.read<RideCubit>();
-    final confirmedPoint = _pickingMode == null
-        ? point
-        : (_mapCenterTemp ?? point);
+    final confirmedPoint = point;
     if (_pickingMode == 'origin') {
       cubit.setOriginPoint(confirmedPoint, name: 'نقطة الانطلاق المحددة');
     } else if (_pickingMode == 'destination') {

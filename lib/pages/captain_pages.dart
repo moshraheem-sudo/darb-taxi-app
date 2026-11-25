@@ -104,7 +104,20 @@ class _CaptainHomePageState extends State<CaptainHomePage>
     super.initState();
     _navAnimController.addListener(_onNavAnimationTick);
     focusedMapPin.addListener(_onFocusedMapPinChanged);
+    captainIncomingDestination.addListener(_onCaptainIncomingDestination);
     _initCaptain();
+  }
+
+  void _onCaptainIncomingDestination() {
+    final dest = captainIncomingDestination.value;
+    if (!mounted || dest == null) return;
+    captainIncomingDestination.value = null;
+    if (_mapReady) {
+      _followCamera = false;
+      _map.move(dest.point, 15.5);
+    }
+    focusedMapPin.value = dest;
+    setState(() {});
   }
 
   void _onFocusedMapPinChanged() {
@@ -243,6 +256,7 @@ class _CaptainHomePageState extends State<CaptainHomePage>
 
   @override
   void dispose() {
+    captainIncomingDestination.removeListener(_onCaptainIncomingDestination);
     focusedMapPin.removeListener(_onFocusedMapPinChanged);
     _navAnimController.removeListener(_onNavAnimationTick);
     _navAnimController.dispose();
