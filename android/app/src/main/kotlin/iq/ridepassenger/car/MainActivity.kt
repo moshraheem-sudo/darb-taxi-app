@@ -2,21 +2,68 @@ package iq.ridepassenger.car
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.util.Locale
 
 class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
     private val navChannel = "iq.ridepassenger.car/external_nav"
     private val ttsChannel = "iq.ridepassenger.car/tts"
+    private val incomingLinksChannel = "iq.ridepassenger.car/incoming_links"
+    private val incomingLinksStreamChannel = "iq.ridepassenger.car/incoming_links_stream"
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var initialIncomingLink: String? = null
+    private var incomingLinksSink: EventChannel.EventSink? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        initialIncomingLink = extractIncomingLink(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val incoming = extractIncomingLink(intent)
+        if (!incoming.isNullOrBlank()) {
+            if (incomingLinksSink != null) {
+                incomingLinksSink?.success(incoming)
+            } else {
+                initialIncomingLink = incoming
+            }
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         tts = TextToSpeech(this, this)
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, incomingLinksChannel)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getInitialLink" -> {
+                        val link = initialIncomingLink
+                        initialIncomingLink = null
+                        result.success(link)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, incomingLinksStreamChannel)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    incomingLinksSink = events
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    incomingLinksSink = null
+                }
+            })
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, navChannel)
             .setMethodCallHandler { call, result ->
@@ -93,6 +140,23 @@ class MainActivity : FlutterActivity(), TextToSpeech.OnInitListener {
             }
         } catch (_: Exception) {
             "unsupported_geo"
+        }
+    }
+
+    private fun extractIncomingLink(intent: Intent?): String? {
+        if (intent == null) return null
+        return when (intent.action) {
+            Intent.ACTION_SEND -> {
+                if (intent.type?.startsWith("text/") == true) {
+                    intent.getStringExtra(Intent.EXTRA_TEXT)?.trim()?.takeIf { it.isNotEmpty() }
+                } else {
+                    null
+                }
+            }
+            Intent.ACTION_VIEW -> {
+                intent.dataString?.trim()?.takeIf { it.isNotEmpty() }
+            }
+            else -> null
         }
     }
 }

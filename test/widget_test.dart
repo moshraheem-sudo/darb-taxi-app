@@ -1,11 +1,14 @@
 import 'package:car/main.dart';
 import 'package:car/models/ride_models.dart';
 import 'package:car/pages/captain_pages.dart';
+import 'package:car/pages/incoming_location_page.dart';
 import 'package:car/pages/safety_page.dart';
 import 'package:car/services/captain_navigation_service.dart';
 import 'package:car/services/iraqi_navigation_service.dart';
+import 'package:car/services/map_link_parser.dart';
 import 'package:car/services/ride_backend_service.dart';
 import 'package:car/widgets/darb_components.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -573,4 +576,195 @@ void main() {
     await tester.pump();
     expect(find.text('حفظ وإرسال للموافقة'), findsOneWidget);
   });
+
+  group('MapLinkParserService', () {
+    test('extracts URL from conversational WhatsApp/Telegram text', () {
+      const msg =
+          'هلا حبيبي هذا موقعي تعال هنا https://maps.google.com/?q=33.315200,44.366100 انتظرني بالباب';
+      expect(
+        MapLinkParserService.extractFirstUrl(msg),
+        'https://maps.google.com/?q=33.315200,44.366100',
+      );
+      expect(MapLinkParserService.extractFirstUrl('geo:32.5184,45.8361'), 'geo:32.5184,45.8361');
+      expect(
+        MapLinkParserService.extractFirstUrl('افتح darb://location?lat=33.3&lng=44.4'),
+        'darb://location?lat=33.3&lng=44.4',
+      );
+    });
+
+    test('parses Google Maps formats (!3d!4d, @lat,lng, dir/, api=1)', () {
+      final exactPin = MapLinkParserService.parseUrl(
+        'https://www.google.com/maps/place/Baghdad+Mall/@33.3120,44.3500,15z/data=!3m1!4b1!4m6!3m5!1s0x15577f:0x123!8m2!3d33.315241!4d44.366149',
+      );
+      expect(exactPin, isNotNull);
+      expect(exactPin!.latitude, closeTo(33.315241, 0.00001));
+      expect(exactPin.longitude, closeTo(44.366149, 0.00001));
+      expect(exactPin.placeName, 'Baghdad Mall');
+      expect(exactPin.placeId, '0x15577f:0x123');
+
+      final atCoords = MapLinkParserService.parseUrl(
+        'https://www.google.com/maps/@32.5184,45.8361,16z',
+      );
+      expect(atCoords, isNotNull);
+      expect(atCoords!.latitude, closeTo(32.5184, 0.0001));
+      expect(atCoords.longitude, closeTo(45.8361, 0.0001));
+
+      final dirSlash = MapLinkParserService.parseUrl(
+        'https://www.google.com/maps/dir/33.3100,44.3600/33.3400,44.4000/',
+      );
+      expect(dirSlash, isNotNull);
+      expect(dirSlash!.hasDirections, isTrue);
+      expect(dirSlash.originLatitude, closeTo(33.3100, 0.0001));
+      expect(dirSlash.originLongitude, closeTo(44.3600, 0.0001));
+      expect(dirSlash.latitude, closeTo(33.3400, 0.0001));
+      expect(dirSlash.longitude, closeTo(44.4000, 0.0001));
+
+      final apiDir = MapLinkParserService.parseUrl(
+        'https://www.google.com/maps/dir/?api=1&origin=33.3100,44.3600&destination=33.3400,44.4000',
+      );
+      expect(apiDir, isNotNull);
+      expect(apiDir!.hasDirections, isTrue);
+      expect(apiDir.originLatitude, closeTo(33.3100, 0.0001));
+      expect(apiDir.latitude, closeTo(33.3400, 0.0001));
+    });
+
+    test('parses Apple Maps, OpenStreetMap, Waze, Bing, geo:, and darb://', () {
+      final apple = MapLinkParserService.parseUrl(
+        'https://maps.apple.com/?ll=33.3152,44.3661&q=Al-Mansour',
+      );
+      expect(apple, isNotNull);
+      expect(apple!.latitude, closeTo(33.3152, 0.0001));
+      expect(apple.longitude, closeTo(44.3661, 0.0001));
+
+      final osm = MapLinkParserService.parseUrl(
+        'https://www.openstreetmap.org/?mlat=32.5184&mlon=45.8361#map=16/32.5184/45.8361',
+      );
+      expect(osm, isNotNull);
+      expect(osm!.latitude, closeTo(32.5184, 0.0001));
+      expect(osm.longitude, closeTo(45.8361, 0.0001));
+
+      final waze = MapLinkParserService.parseUrl(
+        'https://waze.com/ul?ll=33.3152,44.3661&navigate=yes',
+      );
+      expect(waze, isNotNull);
+      expect(waze!.latitude, closeTo(33.3152, 0.0001));
+
+      final bing = MapLinkParserService.parseUrl(
+        'https://www.bing.com/maps?cp=33.3152~44.3661&lvl=15',
+      );
+      expect(bing, isNotNull);
+      expect(bing!.latitude, closeTo(33.3152, 0.0001));
+      expect(bing.longitude, closeTo(44.3661, 0.0001));
+
+      final geo = MapLinkParserService.parseUrl('geo:32.5184,45.8361?q=32.5184,45.8361(Kut)');
+      expect(geo, isNotNull);
+      expect(geo!.latitude, closeTo(32.5184, 0.0001));
+      expect(geo.longitude, closeTo(45.8361, 0.0001));
+
+      final darb = MapLinkParserService.parseUrl(
+        'darb://location?lat=33.3152&lng=44.3661&name=Baghdad',
+      );
+      expect(darb, isNotNull);
+      expect(darb!.latitude, closeTo(33.3152, 0.0001));
+      expect(darb.longitude, closeTo(44.3661, 0.0001));
+      expect(darb.placeName, 'Baghdad');
+    });
+
+    test('resolves short maps.app.goo.gl redirect using Dio and rejects invalid links', () async {
+      final dio = Dio()..httpClientAdapter = _FakeRedirectAdapter();
+      final resolved = await MapLinkParserService.resolveAndParse(
+        'شوف هذا الموقع https://maps.app.goo.gl/abc123',
+        dio: dio,
+      );
+      expect(resolved, isNotNull);
+      expect(resolved!.latitude, closeTo(33.3152, 0.0001));
+      expect(resolved.longitude, closeTo(44.3661, 0.0001));
+
+      final invalid = await MapLinkParserService.resolveAndParse(
+        'https://example.com/no-coordinates-here',
+        dio: dio,
+      );
+      expect(invalid, isNull);
+    });
+  });
+
+  testWidgets('IncomingLocationPage renders details and asks confirmation when ride is active', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    var setDestCalled = false;
+    var setBothCalled = false;
+    const loc = ParsedMapLocation(
+      source: 'Google Maps',
+      latitude: 33.315241,
+      longitude: 44.366149,
+      rawUrl: 'https://maps.google.com/?q=33.315241,44.366149',
+      placeName: 'ساحة التحرير',
+      address: 'بغداد، العراق',
+      originLatitude: 33.300000,
+      originLongitude: 44.350000,
+      originName: 'المنصور',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Directionality(
+          textDirection: TextDirection.rtl,
+          child: IncomingLocationPage(
+            location: loc,
+            isRideActive: true,
+            onSetDestination: () => setDestCalled = true,
+            onSetOrigin: () {},
+            onSetBoth: () => setBothCalled = true,
+            onViewOnMap: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('موقع مشترك'), findsOneWidget);
+    expect(find.text('المصدر: Google Maps'), findsOneWidget);
+    expect(find.text('ساحة التحرير'), findsOneWidget);
+    expect(find.text('33.315241, 44.366149'), findsOneWidget);
+    expect(find.text('اعتماد الانطلاق والوجهة معاً'), findsOneWidget);
+
+    await tester.tap(find.text('اعتماد كوجهة'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('رحلة نشطة حالياً'), findsOneWidget);
+    expect(setDestCalled, isFalse);
+
+    await tester.tap(find.text('تأكيد'));
+    await tester.pumpAndSettle();
+    expect(setDestCalled, isTrue);
+    expect(setBothCalled, isFalse);
+  });
+}
+
+class _FakeRedirectAdapter implements HttpClientAdapter {
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    if (options.uri.host == 'maps.app.goo.gl') {
+      return ResponseBody.fromString(
+        '',
+        302,
+        headers: {
+          Headers.contentTypeHeader: ['text/plain'],
+          'location': ['https://www.google.com/maps/@33.3152,44.3661,16z'],
+        },
+      );
+    }
+    return ResponseBody.fromString('', 404);
+  }
 }

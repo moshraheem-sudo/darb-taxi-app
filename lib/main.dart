@@ -15,7 +15,10 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'models/ride_models.dart';
 import 'pages/captain_pages.dart';
+import 'pages/incoming_location_page.dart';
 import 'pages/safety_page.dart';
+import 'services/incoming_link_service.dart';
+import 'services/map_link_parser.dart';
 import 'services/notification_center.dart';
 import 'services/passenger_api.dart';
 import 'services/ride_backend_service.dart';
@@ -726,6 +729,57 @@ final router = GoRouter(
       builder: (context, state) =>
           RideFeedbackPage(rideId: state.pathParameters['rideId']!),
     ),
+    GoRoute(
+      path: '/incoming-location',
+      builder: (context, state) {
+        final extra = state.extra;
+        if (extra is! ParsedMapLocation) {
+          return const HomePage();
+        }
+        final cubit = context.read<RideCubit>();
+        final isRideActive = cubit.state.rideStatus != RideBookingStatus.idle;
+        return IncomingLocationPage(
+          location: extra,
+          isRideActive: isRideActive,
+          onSetDestination: () {
+            cubit.setMapDestination(
+              LatLng(extra.latitude, extra.longitude),
+              name: extra.placeName ?? extra.address,
+            );
+            context.go('/');
+          },
+          onSetOrigin: () {
+            cubit.setOriginPoint(
+              LatLng(extra.latitude, extra.longitude),
+              name: extra.placeName ?? extra.address,
+            );
+            context.go('/');
+          },
+          onSetBoth: extra.hasDirections
+              ? () {
+                  cubit.setOriginPoint(
+                    LatLng(extra.originLatitude!, extra.originLongitude!),
+                    name: extra.originName,
+                  );
+                  cubit.setMapDestination(
+                    LatLng(extra.latitude, extra.longitude),
+                    name: extra.placeName ?? extra.address,
+                  );
+                  context.go('/');
+                }
+              : null,
+          onViewOnMap: () {
+            if (!isRideActive && cubit.state.destination == null) {
+              cubit.setMapDestination(
+                LatLng(extra.latitude, extra.longitude),
+                name: extra.placeName ?? extra.address,
+              );
+            }
+            context.go('/');
+          },
+        );
+      },
+    ),
   ],
 );
 
@@ -741,9 +795,15 @@ final ValueNotifier<Locale> appLocale = ValueNotifier<Locale>(
 );
 
 class _RideAppState extends State<RideApp> {
+  final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
+      GlobalKey<ScaffoldMessengerState>();
+  StreamSubscription<String>? _incomingLinkSub;
+  ParsedMapLocation? _pendingIncomingLocation;
+
   @override
   void initState() {
     super.initState();
+    passengerLoggedIn.addListener(_flushPendingIncomingLocation);
     SharedPreferences.getInstance().then((preferences) {
       currentUserRole.value = userRoleFromString(
         preferences.getString('darb_user_role'),
@@ -753,6 +813,63 @@ class _RideAppState extends State<RideApp> {
       final lang = preferences.getString('darb_locale') ?? 'ar';
       appLocale.value = Locale(lang == 'en' ? 'en' : 'ar');
     });
+    _initIncomingLinks();
+  }
+
+  Future<void> _initIncomingLinks() async {
+    _incomingLinkSub = IncomingLinkService.instance.rawIncomingLinks.listen(
+      (rawText) => unawaited(_handleRawIncomingLink(rawText)),
+    );
+    final initialLink =
+        await IncomingLinkService.instance.initializeAndCheckInitial();
+    if (initialLink != null && initialLink.isNotEmpty) {
+      await _handleRawIncomingLink(initialLink);
+    }
+  }
+
+  Future<void> _handleRawIncomingLink(String rawText) async {
+    final parsed = await IncomingLinkService.instance.parseIncomingText(rawText);
+    if (!mounted) return;
+    if (parsed == null) {
+      final isEn = appLocale.value.languageCode == 'en';
+      _scaffoldMessengerKey.currentState?.showSnackBar(
+        SnackBar(
+          content: Text(
+            isEn
+                ? 'Could not extract valid coordinates from the shared link'
+                : 'تعذر استخراج إحداثيات صالحة من الرابط المشترك',
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (!passengerLoggedIn.value) {
+      _pendingIncomingLocation = parsed;
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      router.push('/incoming-location', extra: parsed);
+    });
+  }
+
+  void _flushPendingIncomingLocation() {
+    if (!passengerLoggedIn.value || _pendingIncomingLocation == null) return;
+    final pending = _pendingIncomingLocation!;
+    _pendingIncomingLocation = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      router.push('/incoming-location', extra: pending);
+    });
+  }
+
+  @override
+  void dispose() {
+    passengerLoggedIn.removeListener(_flushPendingIncomingLocation);
+    _incomingLinkSub?.cancel();
+    super.dispose();
   }
 
   @override
@@ -767,6 +884,7 @@ class _RideAppState extends State<RideApp> {
             valueListenable: passengerLoggedIn,
             builder: (context, loggedIn, _) {
               return MaterialApp.router(
+                scaffoldMessengerKey: _scaffoldMessengerKey,
                 debugShowCheckedModeBanner: false,
                 routerConfig: router,
                 themeMode: dark ? ThemeMode.dark : ThemeMode.light,
