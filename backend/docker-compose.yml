@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: darb_taxi_postgis
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: darb_taxi
+      POSTGRES_USER: darb_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-darb_local_dev_pw}
+    ports:
+      - "5432:5432"
+    volumes:
+      - darb_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U darb_user -d darb_taxi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  darb_pg_data:
