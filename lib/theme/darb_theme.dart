@@ -90,6 +90,13 @@ class DarbTheme {
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),
+    textTheme: const TextTheme(
+      titleLarge: TextStyle(fontSize: 18.5, fontWeight: FontWeight.w800),
+      titleMedium: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700),
+      bodyLarge: TextStyle(fontSize: 14.5),
+      bodyMedium: TextStyle(fontSize: 13.5),
+      bodySmall: TextStyle(fontSize: 12),
+    ),
     fontFamily: 'Arial',
   );
 }

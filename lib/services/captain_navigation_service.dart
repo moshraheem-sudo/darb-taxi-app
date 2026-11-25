@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:latlong2/latlong.dart';
 
 /// Turn-by-turn maneuver instruction parsed from OSRM `steps=true`.
@@ -61,6 +62,10 @@ class NavigationProgressSnapshot {
     required this.distanceToRouteMeters,
     required this.isOffRoute,
     this.nextStep,
+    this.followingStep,
+    this.distanceToNextStepMeters = 0,
+    this.dynamicInstruction = '',
+    this.speechKey,
   });
 
   final double progress;
@@ -69,9 +74,13 @@ class NavigationProgressSnapshot {
   final double distanceToRouteMeters;
   final bool isOffRoute;
   final RouteStepInstruction? nextStep;
+  final RouteStepInstruction? followingStep;
+  final double distanceToNextStepMeters;
+  final String dynamicInstruction;
+  final String? speechKey;
 }
 
-/// Handles OSRM multi-route fetching, turn-by-turn parsing, and off-route checks.
+/// Handles OSRM multi-route fetching, turn-by-turn parsing, TTS, and off-route checks.
 class CaptainNavigationService {
   CaptainNavigationService({Dio? dio})
       : _dio = dio ??
@@ -83,8 +92,34 @@ class CaptainNavigationService {
             );
 
   final Dio _dio;
+  static const _ttsChannel = MethodChannel('iq.ridepassenger.car/tts');
   static const Distance _geo = Distance();
   static const double offRouteThresholdMeters = 65;
+
+  static Future<void> speakArabic(String text) async {
+    if (text.trim().isEmpty) return;
+    try {
+      await _ttsChannel.invokeMethod<void>('speakArabic', {'text': text});
+    } catch (_) {}
+  }
+
+  static Future<void> stopSpeaking() async {
+    try {
+      await _ttsChannel.invokeMethod<void>('stop');
+    } catch (_) {}
+  }
+
+  /// Calculates bearing in degrees (0..360) from [from] to [to].
+  static double bearingDegrees(LatLng from, LatLng to) {
+    final lat1 = from.latitude * math.pi / 180;
+    final lat2 = to.latitude * math.pi / 180;
+    final dLon = (to.longitude - from.longitude) * math.pi / 180;
+    final y = math.sin(dLon) * math.cos(lat2);
+    final x =
+        math.cos(lat1) * math.sin(lat2) -
+        math.sin(lat1) * math.cos(lat2) * math.cos(dLon);
+    return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
+  }
 
   /// Fetches up to 3 actual calculated routes from OSRM.
   /// Never fabricates extra routes if OSRM returns fewer than 3.
@@ -278,16 +313,51 @@ class CaptainNavigationService {
     );
 
     RouteStepInstruction? nextStep;
+    RouteStepInstruction? followingStep;
+    double distToNextM = 0;
+    String dynamicInstruction = '';
+    String? speechKey;
+
     if (route.steps.isNotEmpty) {
-      for (final step in route.steps) {
+      var nextStepIdx = -1;
+      for (var i = 0; i < route.steps.length; i++) {
+        final step = route.steps[i];
         if (step.maneuverType == 'depart') continue;
         final dStep = _geo.as(LengthUnit.Meter, current, step.maneuverPoint);
         if (dStep > 15 || step.maneuverType == 'arrive') {
           nextStep = step;
+          distToNextM = dStep;
+          nextStepIdx = i;
           break;
         }
       }
-      nextStep ??= route.steps.last;
+      if (nextStep == null) {
+        nextStep = route.steps.last;
+        nextStepIdx = route.steps.length - 1;
+        distToNextM = _geo.as(
+          LengthUnit.Meter,
+          current,
+          nextStep.maneuverPoint,
+        );
+      }
+      if (nextStepIdx + 1 < route.steps.length) {
+        followingStep = route.steps[nextStepIdx + 1];
+      }
+
+      if (distToNextM <= 35) {
+        dynamicInstruction = 'انعطف الآن: ${nextStep.instructionText}';
+        speechKey = '${nextStepIdx}_now';
+      } else if (distToNextM <= 120) {
+        dynamicInstruction = 'استعد للانعطاف: ${nextStep.instructionText}';
+        speechKey = '${nextStepIdx}_prep';
+      } else {
+        final roundedM = (distToNextM / 50).round() * 50;
+        final distLabel = roundedM >= 1000
+            ? '${(roundedM / 1000).toStringAsFixed(1)} كم'
+            : '$roundedM متر';
+        dynamicInstruction = 'بعد $distLabel: ${nextStep.instructionText}';
+        speechKey = '${nextStepIdx}_far';
+      }
     }
 
     return NavigationProgressSnapshot(
@@ -297,6 +367,10 @@ class CaptainNavigationService {
       distanceToRouteMeters: minDistM,
       isOffRoute: minDistM > offRouteThresholdMeters,
       nextStep: nextStep,
+      followingStep: followingStep,
+      distanceToNextStepMeters: distToNextM,
+      dynamicInstruction: dynamicInstruction,
+      speechKey: speechKey,
     );
   }
 }

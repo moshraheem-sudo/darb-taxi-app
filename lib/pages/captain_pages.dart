@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -61,6 +62,11 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
   double _remainingKm = 0;
   double _remainingMin = 0;
   RouteStepInstruction? _nextInstruction;
+  RouteStepInstruction? _followingInstruction;
+  String _dynamicInstruction = '';
+  bool _followCamera = true;
+  bool _voiceEnabled = true;
+  String? _lastSpokenKey;
   String? _navPromptShownForRideId;
 
   StreamSubscription<UserLocation>? _gpsSub;
@@ -291,14 +297,22 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
       _routePoints = chosen.points;
       _selectingRoute = false;
       _navigationActive = true;
+      _followCamera = true;
       _offRoute = false;
       _navProgress = 0;
       _remainingKm = chosen.distanceKm;
       _remainingMin = chosen.durationMin;
       _nextInstruction =
           chosen.steps.isNotEmpty ? chosen.steps.first : null;
+      _followingInstruction =
+          chosen.steps.length > 1 ? chosen.steps[1] : null;
+      _dynamicInstruction = _nextInstruction?.instructionText ?? '';
+      _lastSpokenKey = null;
     });
     _fitPoints(chosen.points);
+    if (_voiceEnabled && _dynamicInstruction.isNotEmpty) {
+      CaptainNavigationService.speakArabic(_dynamicInstruction);
+    }
     if (!_hasServerUrl) {
       _startSimulatedMove();
     }
@@ -319,9 +333,27 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
       _remainingKm = snap.remainingKm;
       _remainingMin = snap.remainingMin;
       _nextInstruction = snap.nextStep;
+      _followingInstruction = snap.followingStep;
+      _dynamicInstruction = snap.dynamicInstruction;
       _offRoute = snap.isOffRoute;
     });
+    if (_followCamera && _mapReady) {
+      _map.move(current, 16.5);
+    }
+    if (_voiceEnabled &&
+        !snap.isOffRoute &&
+        snap.speechKey != null &&
+        snap.speechKey != _lastSpokenKey &&
+        snap.dynamicInstruction.isNotEmpty) {
+      _lastSpokenKey = snap.speechKey;
+      CaptainNavigationService.speakArabic(snap.dynamicInstruction);
+    }
     if (snap.isOffRoute && !_rerouting) {
+      if (_voiceEnabled) {
+        CaptainNavigationService.speakArabic(
+          'تم الخروج عن المسار، جارٍ إعادة الحساب',
+        );
+      }
       _rerouteFromCurrent(current, _activeRide!);
     }
   }
@@ -571,8 +603,15 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
         return;
       }
       final nextPt = _routePoints[idx];
+      final bearing = CaptainNavigationService.bearingDegrees(
+        _captainPosition,
+        nextPt,
+      );
       idx += (_routePoints.length > 20) ? (_routePoints.length ~/ 12) : 1;
-      setState(() => _captainPosition = nextPt);
+      setState(() {
+        _captainPosition = nextPt;
+        _captainHeading = bearing;
+      });
       _updateNavigationMetrics(nextPt);
       _backend.publishCaptainLocation(
         position: nextPt,
@@ -691,13 +730,28 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
     );
     if (!mounted) return;
     if (res == ExternalNavLaunchResult.notInstalled) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('تطبيق ${IraqiNavigationService.labelFor(app)} غير مثبت على الجهاز.'),
-          action: SnackBarAction(
-            label: 'المتجر',
-            onPressed: () => IraqiNavigationService.openStoreForApp(app),
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('${IraqiNavigationService.labelFor(app)} غير مثبت'),
+          content: Text(
+            'تطبيق ${IraqiNavigationService.labelFor(app)} غير مثبت على هذا الجهاز. يمكنك تثبيته من المتجر الرسمي أو متابعة الملاحة داخل درب.',
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('متابعة داخل درب'),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                IraqiNavigationService.openStoreForApp(app);
+              },
+              style: FilledButton.styleFrom(backgroundColor: _captainGreen),
+              icon: const Icon(Icons.download_outlined),
+              label: const Text('تثبيت التطبيق'),
+            ),
+          ],
         ),
       );
     } else if (res == ExternalNavLaunchResult.unsupportedGeo) {
@@ -740,9 +794,12 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
               initialCenter: _captainPosition,
               initialZoom: 14.5,
               onMapReady: () => _mapReady = true,
-              onPositionChanged: (camera, _) {
+              onPositionChanged: (camera, hasGesture) {
                 if ((camera.rotation - _mapRotation).abs() > 0.5 && mounted) {
                   setState(() => _mapRotation = camera.rotation);
+                }
+                if (hasGesture && _followCamera && _navigationActive && mounted) {
+                  setState(() => _followCamera = false);
                 }
               },
             ),
@@ -788,26 +845,12 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
                 markers: [
                   Marker(
                     point: _captainPosition,
-                    width: 44,
-                    height: 44,
+                    width: 48,
+                    height: 48,
                     child: AnimatedRotation(
                       turns: _captainHeading / 360,
-                      duration: const Duration(milliseconds: 250),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: _captainGreen,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 3),
-                          boxShadow: const [
-                            BoxShadow(color: Colors.black26, blurRadius: 6),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.navigation,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ),
+                      duration: const Duration(milliseconds: 280),
+                      child: const _TriangularNavArrow(),
                     ),
                   ),
                   if (focusRide != null) ...[
@@ -971,25 +1014,45 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
                             Text(
                               _offRoute
                                   ? 'تم الخروج عن المسار — جارٍ إعادة الحساب...'
-                                  : (_nextInstruction?.instructionText ??
-                                      'اتبع المسار المعتمد'),
+                                  : (_dynamicInstruction.isNotEmpty
+                                      ? _dynamicInstruction
+                                      : (_nextInstruction?.instructionText ??
+                                          'اتبع المسار المعتمد')),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w800,
-                                fontSize: 14,
+                                fontSize: 13.5,
                               ),
                             ),
                             if (!_offRoute && _nextInstruction != null)
                               Text(
-                                '${_nextInstruction!.distanceMeters.round()} م • المتبقي ${_remainingKm.toStringAsFixed(1)} كم (${_remainingMin.ceil()} د)',
+                                'المتبقي ${_remainingKm.toStringAsFixed(1)} كم (${_remainingMin.ceil()} د)${_followingInstruction != null ? ' • بعدها: ${_followingInstruction!.instructionText}' : ''}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   color: Colors.white70,
-                                  fontSize: 12,
+                                  fontSize: 11.5,
                                 ),
                               ),
                           ],
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: _voiceEnabled ? 'كتم التوجيه الصوتي' : 'تفعيل التوجيه الصوتي',
+                        onPressed: () {
+                          setState(() => _voiceEnabled = !_voiceEnabled);
+                          if (!_voiceEnabled) {
+                            CaptainNavigationService.stopSpeaking();
+                          }
+                        },
+                        icon: Icon(
+                          _voiceEnabled
+                              ? Icons.volume_up_rounded
+                              : Icons.volume_off_rounded,
+                          color: Colors.white,
+                          size: 22,
                         ),
                       ),
                     ],
@@ -1033,9 +1096,22 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
                         ],
                         FloatingActionButton.small(
                           heroTag: 'captain_my_loc',
-                          onPressed: _startGpsTracking,
-                          backgroundColor: surface,
-                          foregroundColor: primaryText,
+                          onPressed: () {
+                            setState(() => _followCamera = true);
+                            if (_mapReady) {
+                              _map.move(
+                                _captainPosition,
+                                _navigationActive ? 16.5 : 15,
+                              );
+                            }
+                            _startGpsTracking();
+                          },
+                          backgroundColor: !_followCamera && _navigationActive
+                              ? _captainBlue
+                              : surface,
+                          foregroundColor: !_followCamera && _navigationActive
+                              ? Colors.white
+                              : primaryText,
                           child: const Icon(Icons.my_location),
                         ),
                       ],
@@ -2028,11 +2104,41 @@ class _CaptainOnboardingPageState extends State<CaptainOnboardingPage> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('بيانات الكابتن والمستمسكات')),
+      bottomNavigationBar: _loading
+          ? null
+          : SafeArea(
+              top: false,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).cardColor,
+                  border: Border(
+                    top: BorderSide(color: Theme.of(context).dividerColor),
+                  ),
+                ),
+                child: FilledButton(
+                  onPressed: _saving ? null : _save,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _captainGreen,
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  child: Text(
+                    _saving ? 'جارٍ الحفظ...' : 'حفظ وإرسال للموافقة',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(18),
-              children: [
+          : SafeArea(
+              top: false,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+                children: [
                 Card(
                   child: ListTile(
                     leading: Icon(
@@ -2203,23 +2309,9 @@ class _CaptainOnboardingPageState extends State<CaptainOnboardingPage> {
                     ),
                   );
                 }),
-                const SizedBox(height: 16),
-                FilledButton(
-                  onPressed: _saving ? null : _save,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _captainGreen,
-                    minimumSize: const Size.fromHeight(52),
-                  ),
-                  child: Text(
-                    _saving ? 'جارٍ الحفظ...' : 'حفظ وإرسال للموافقة',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
               ],
             ),
+          ),
     );
   }
 }
@@ -2405,6 +2497,49 @@ class _CaptainHistoryPageState extends State<CaptainHistoryPage> {
             ),
     );
   }
+}
+
+class _TriangularNavArrow extends StatelessWidget {
+  const _TriangularNavArrow();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white,
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8)],
+      ),
+      padding: const EdgeInsets.all(5),
+      child: CustomPaint(
+        size: const Size(28, 28),
+        painter: _ArrowTrianglePainter(),
+      ),
+    );
+  }
+}
+
+class _ArrowTrianglePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final path = ui.Path()
+      ..moveTo(w * 0.5, h * 0.08)
+      ..lineTo(w * 0.88, h * 0.86)
+      ..lineTo(w * 0.5, h * 0.68)
+      ..lineTo(w * 0.12, h * 0.86)
+      ..close();
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = _captainBlue
+        ..style = PaintingStyle.fill,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _ExternalNavOptionTile extends StatelessWidget {

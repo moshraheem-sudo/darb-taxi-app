@@ -541,5 +541,36 @@ void main() {
     expect(await IraqiNavigationService.loadPreferredNavApp(), IraqiNavApp.ask);
     await IraqiNavigationService.savePreferredNavApp(IraqiNavApp.darbuna);
     expect(await IraqiNavigationService.loadPreferredNavApp(), IraqiNavApp.darbuna);
+
+    expect(
+      IraqiNavigationService.storeUrlFor(IraqiNavApp.darbuna),
+      'https://play.google.com/store/apps/details?id=iq.darbuna.app',
+    );
+    expect(
+      IraqiNavigationService.storeUrlFor(IraqiNavApp.dahliz),
+      'https://dahliz.app/ar/',
+    );
+  });
+
+  testWidgets('CaptainOnboardingPage keeps Save button visible in SafeArea on small screens', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Directionality(
+          textDirection: TextDirection.rtl,
+          child: CaptainOnboardingPage(),
+        ),
+      ),
+    );
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 80)));
+    await tester.pump();
+    expect(find.text('حفظ وإرسال للموافقة'), findsOneWidget);
   });
 }
