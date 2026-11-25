@@ -2,11 +2,13 @@ import 'package:car/main.dart';
 import 'package:car/models/ride_models.dart';
 import 'package:car/pages/captain_pages.dart';
 import 'package:car/pages/incoming_location_page.dart';
+import 'package:car/pages/offline_maps_page.dart';
 import 'package:car/pages/safety_page.dart';
 import 'package:car/services/captain_navigation_service.dart';
 import 'package:car/services/captain_photo_service.dart';
 import 'package:car/services/iraqi_navigation_service.dart';
 import 'package:car/services/map_link_parser.dart';
+import 'package:car/services/offline_maps_service.dart';
 import 'package:car/services/ride_backend_service.dart';
 import 'package:car/widgets/darb_components.dart';
 import 'package:dio/dio.dart';
@@ -732,7 +734,7 @@ void main() {
     expect(find.text('موقع مشترك'), findsOneWidget);
     expect(find.text('المصدر: Google Maps'), findsOneWidget);
     expect(find.text('ساحة التحرير'), findsOneWidget);
-    expect(find.text('33.315241, 44.366149'), findsOneWidget);
+    expect(find.textContaining('https://'), findsNothing);
     expect(find.text('اعتماد الانطلاق والوجهة معاً'), findsOneWidget);
 
     await tester.tap(find.text('اعتماد كوجهة'));
@@ -855,7 +857,8 @@ void main() {
     expect(find.textContaining('GoException'), findsNothing);
     expect(find.textContaining('Page Not Found'), findsNothing);
     expect(find.text('موقع مشترك'), findsOneWidget);
-    expect(find.text('32.520745, 45.801720'), findsOneWidget);
+    expect(find.text('بغداد'), findsOneWidget);
+    expect(find.textContaining('geo:'), findsNothing);
   });
 
   test('RideBackendService triggerMultipleLocalDemoRequests generates 3 priced requests', () async {
@@ -864,6 +867,43 @@ void main() {
         .triggerMultipleLocalDemoRequests(const LatLng(32.5050, 45.8230));
     expect(created, hasLength(3));
     expect(created.map((e) => e.fareIqd).toList(), [1500, 3000, 4500]);
+  });
+
+  test('OfflineMapsService covers All Iraq + 18 Iraqi governorates with valid tile math', () {
+    expect(OfflineMapsService.regions.length, 20);
+    final allIraq = OfflineMapsService.regions.first;
+    expect(allIraq.isAllIraq, isTrue);
+    expect(allIraq.nameAr, 'كل العراق');
+    expect(OfflineMapsService.countTilesForRegion(allIraq), greaterThan(0));
+    expect(OfflineMapsService.estimateSizeMb(allIraq), greaterThan(0));
+    final (x, y) = OfflineMapsService.latLngToTile(32.5050, 45.8230, 12);
+    expect(x, greaterThan(0));
+    expect(y, greaterThan(0));
+  });
+
+  testWidgets('OfflineMapsPage renders Iraq and governorates list & map tabs', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Directionality(
+          textDirection: TextDirection.rtl,
+          child: OfflineMapsPage(),
+        ),
+      ),
+    );
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+    await tester.pump();
+
+    expect(find.text('خرائط دون اتصال'), findsOneWidget);
+    expect(find.text('كل العراق'), findsOneWidget);
+    expect(find.text('بغداد'), findsOneWidget);
+    expect(find.text('واسط'), findsOneWidget);
+
+    await tester.tap(find.text('خريطة'));
+    await tester.pump();
+    expect(find.byType(FlutterMap), findsOneWidget);
   });
 }
 

@@ -17,6 +17,7 @@ import '../services/captain_photo_service.dart';
 import '../services/iraqi_navigation_service.dart';
 import '../services/location_service.dart';
 import '../services/notification_center.dart';
+import '../services/offline_maps_service.dart';
 import '../services/ride_backend_service.dart';
 import '../widgets/ride_sheets.dart';
 
@@ -394,6 +395,7 @@ class _CaptainHomePageState extends State<CaptainHomePage>
     });
     _offRouteDetector.reset();
     _fitPoints(chosen.points);
+    unawaited(OfflineMapsService.instance.precacheRouteCorridor(chosen.points));
     if (_voiceEnabled && _dynamicInstruction.isNotEmpty) {
       CaptainNavigationService.speakArabic(_dynamicInstruction);
     }
@@ -967,6 +969,7 @@ class _CaptainHomePageState extends State<CaptainHomePage>
                 userAgentPackageName: 'iq.ridepassenger.car',
                 maxZoom: 19,
                 keepBuffer: 4,
+                tileProvider: DarbOfflineTileProvider(),
                 tileBuilder: dark ? darkModeTileBuilder : null,
               ),
               if (_selectingRoute && _routeOptions.isNotEmpty)
@@ -1120,6 +1123,17 @@ class _CaptainHomePageState extends State<CaptainHomePage>
                       elevation: 4,
                     ),
                     icon: const Icon(Icons.account_balance_wallet_outlined),
+                  ),
+                  const SizedBox(width: 6),
+                  IconButton.filled(
+                    tooltip: 'خرائط دون اتصال',
+                    onPressed: () => context.push('/offline-maps'),
+                    style: IconButton.styleFrom(
+                      backgroundColor: surface,
+                      foregroundColor: _captainBlue,
+                      elevation: 4,
+                    ),
+                    icon: const Icon(Icons.download_for_offline_outlined),
                   ),
                   const SizedBox(width: 6),
                   IconButton.filled(
@@ -2974,17 +2988,9 @@ class _TriangularNavArrow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: Colors.white,
-        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8)],
-      ),
-      padding: const EdgeInsets.all(5),
-      child: CustomPaint(
-        size: const Size(28, 28),
-        painter: _ArrowTrianglePainter(),
-      ),
+    return CustomPaint(
+      size: const Size(34, 34),
+      painter: _ArrowTrianglePainter(),
     );
   }
 }
@@ -2996,10 +3002,19 @@ class _ArrowTrianglePainter extends CustomPainter {
     final h = size.height;
     final path = ui.Path()
       ..moveTo(w * 0.5, h * 0.08)
-      ..lineTo(w * 0.88, h * 0.86)
+      ..lineTo(w * 0.88, h * 0.88)
       ..lineTo(w * 0.5, h * 0.68)
-      ..lineTo(w * 0.12, h * 0.86)
+      ..lineTo(w * 0.12, h * 0.88)
       ..close();
+    canvas.drawShadow(path, Colors.black.withValues(alpha: 0.45), 4, false);
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3.2
+        ..strokeJoin = ui.StrokeJoin.round,
+    );
     canvas.drawPath(
       path,
       Paint()

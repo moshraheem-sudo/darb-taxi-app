@@ -16,10 +16,12 @@ import 'package:url_launcher/url_launcher.dart';
 import 'models/ride_models.dart';
 import 'pages/captain_pages.dart';
 import 'pages/incoming_location_page.dart';
+import 'pages/offline_maps_page.dart';
 import 'pages/safety_page.dart';
 import 'services/incoming_link_service.dart';
 import 'services/map_link_parser.dart';
 import 'services/notification_center.dart';
+import 'services/offline_maps_service.dart';
 import 'services/passenger_api.dart';
 import 'services/ride_backend_service.dart';
 import 'theme/darb_theme.dart';
@@ -711,6 +713,10 @@ final router = GoRouter(
     GoRoute(
       path: '/settings',
       builder: (context, state) => const SettingsPage(),
+    ),
+    GoRoute(
+      path: '/offline-maps',
+      builder: (context, state) => const OfflineMapsPage(),
     ),
     GoRoute(
       path: '/notifications',
@@ -1827,6 +1833,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 tileDisplay: const TileDisplay.fadeIn(
                   duration: Duration(milliseconds: 120),
                 ),
+                tileProvider: DarbOfflineTileProvider(),
                 tileBuilder: state.dark ? darkModeTileBuilder : null,
                 errorTileCallback: (tile, error, stackTrace) {
                   if (!_mapTilesUnavailable && mounted) {
@@ -3686,6 +3693,7 @@ class _RidePageState extends State<RidePage> {
                           urlTemplate:
                               'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                           userAgentPackageName: 'iq.ridepassenger.car',
+                          tileProvider: DarbOfflineTileProvider(),
                           tileBuilder: state.dark ? darkModeTileBuilder : null,
                         ),
                         if (state.route != null)
@@ -4584,6 +4592,14 @@ class _SettingsPageState extends State<SettingsPage> {
           subtitle: Text(
             'جلسة الدخول آمنة؛ والوجهات المفضلة محفوظة محلياً على جهازك.',
           ),
+        ),
+        const Divider(),
+        ListTile(
+          leading: const Icon(Icons.download_for_offline_outlined, color: green),
+          title: const Text('خرائط دون اتصال'),
+          subtitle: const Text('تنزيل خريطة العراق أو المحافظات للعمل بلا إنترنت'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/offline-maps'),
         ),
         if (currentUserRole.value == UserRole.captain) ...[
           const Divider(),

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
@@ -103,9 +102,6 @@ class IncomingLocationPage extends StatelessWidget {
             initialCenter: targetPoint,
             initialZoom: 15.5,
           );
-
-    final coordsText =
-        '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}';
 
     return Scaffold(
       appBar: AppBar(
@@ -225,60 +221,6 @@ class IncomingLocationPage extends StatelessWidget {
                         ],
                       ),
                     ],
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.my_location_rounded,
-                          size: 16,
-                          color: cs.primary,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: SelectableText(
-                            coordsText,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              fontFeatures: const [FontFeature.tabularFigures()],
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: isArabic ? 'نسخ الإحداثيات' : 'Copy coordinates',
-                          icon: const Icon(Icons.copy_rounded, size: 18),
-                          onPressed: () {
-                            Clipboard.setData(ClipboardData(text: coordsText));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  isArabic
-                                      ? 'تم نسخ الإحداثيات'
-                                      : 'Coordinates copied',
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                    if (location.placeId?.isNotEmpty == true) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'Place ID: ${location.placeId}',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: cs.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 6),
-                    Text(
-                      location.rawUrl,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: cs.onSurfaceVariant,
-                      ),
-                    ),
                   ],
                 ),
               ),
