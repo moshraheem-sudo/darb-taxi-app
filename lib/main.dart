@@ -163,6 +163,7 @@ class RouteInfo {
 enum RideBookingStatus {
   idle,
   searching,
+  noCaptainAvailable,
   driverAssigned,
   driverArrived,
   inProgress,
@@ -489,8 +490,14 @@ class RideCubit extends Cubit<RideState> {
   void setStopWaitMinutes(int minutes) =>
       emit(state.copy(stopWaitMinutes: minutes));
 
-  void setServiceCategory(String category) =>
-      emit(state.copy(serviceCategory: category));
+  void setServiceCategory(String category) => emit(
+    state.copy(
+      serviceCategory: category,
+      selectedTier: category == 'box'
+          ? 'box'
+          : (state.selectedTier == 'box' ? 'saver' : state.selectedTier),
+    ),
+  );
 
   void setSelectedTier(String tier) => emit(state.copy(selectedTier: tier));
 
@@ -575,26 +582,19 @@ class RideCubit extends Cubit<RideState> {
   }
 
   int priceForTier(String tier) {
-    int base = (tier == 'plus')
-        ? 1500
-        : (state.serviceCategory == 'box' ? 1250 : 1000);
-    int extra = 0;
-    if (state.secondDestination != null) {
-      extra += 500;
-    }
-    if (state.stopWaitMinutes > 0) {
-      extra += (state.stopWaitMinutes <= 5
-          ? 250
-          : state.stopWaitMinutes <= 15
-          ? 500
-          : 750);
-    }
-    if (state.roundTrip) {
-      extra += (base * 0.6).round();
-      extra = ((extra / 250).round()) * 250;
-    }
-    final total = base + extra - state.discountAmount;
-    return total < 500 ? 500 : total;
+    final isPlus = tier == 'plus';
+    final isBox = tier == 'box' || state.serviceCategory == 'box';
+    final base = isPlus ? 1500 : (isBox ? 2000 : 1000);
+    final perKm = isPlus ? 450 : 350;
+    final distanceKm = state.origin == null || state.destination == null
+        ? 0.0
+        : _approxDistance(state.origin!, state.destination!);
+    final subtotal = base + distanceKm * perKm + state.stopWaitMinutes * 100;
+    final multiplier = state.roundTrip ? 1.85 : 1.0;
+    final roundedFare = ((subtotal * multiplier / 250).round()) * 250;
+    final fare = roundedFare < base ? base : roundedFare;
+    final discount = state.discountAmount.clamp(0, fare);
+    return fare - discount;
   }
 
   int get currentPrice => priceForTier(state.selectedTier);
@@ -967,6 +967,8 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final _map = MapController();
+  final GlobalKey _mapViewportKey = GlobalKey();
+  final GlobalKey _pickerPinKey = GlobalKey();
   bool _mapReady = false;
   bool _mapTilesUnavailable = false;
   int _tileRetryKey = 0;
@@ -983,9 +985,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   List<Place> _recentPlaces = [];
   List<Place> _savedPlaces = [];
   Timer? _rideSimulationTimer;
+  Timer? _rideSearchTimeout;
+  String? _searchTimeoutRideId;
   StreamSubscription<RideRequestPayload>? _rideUpdatesSub;
   StreamSubscription<LatLng>? _driverLocationSub;
   RideRequestPayload? _activeBackendRide;
+  final Set<String> _closedRideIds = {};
 
   @override
   void initState() {
@@ -1029,6 +1034,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     switch (pending.status) {
       case RideDispatchStatus.searching:
         cubit.setRideStatus(RideBookingStatus.searching);
+        _startRideSearchTimeout(pending.rideId);
         break;
       case RideDispatchStatus.accepted:
         cubit.setRideStatus(RideBookingStatus.driverAssigned);
@@ -1050,6 +1056,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       updated,
     ) {
       if (!mounted) return;
+      if (_closedRideIds.contains(updated.rideId)) return;
       if (_activeBackendRide != null &&
           _activeBackendRide!.rideId != updated.rideId) {
         return;
@@ -1057,6 +1064,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _activeBackendRide = updated;
       _rideSimulationTimer?.cancel();
       final cubit = context.read<RideCubit>();
+      if (updated.status == RideDispatchStatus.searching) {
+        _startRideSearchTimeout(updated.rideId);
+      } else {
+        _rideSearchTimeout?.cancel();
+        _rideSearchTimeout = null;
+        _searchTimeoutRideId = null;
+      }
       if (updated.captainName != null && updated.captainName!.isNotEmpty) {
         cubit.updateDriverDetails(
           name: updated.captainName!,
@@ -1322,6 +1336,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _rideSimulationTimer?.cancel();
+    _rideSearchTimeout?.cancel();
     _rideUpdatesSub?.cancel();
     _driverLocationSub?.cancel();
     super.dispose();
@@ -1601,7 +1616,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       final created = await RideBackendService.instance.createRideRequest(
         payload,
       );
-      _activeBackendRide = created;
+      if (_activeBackendRide == null ||
+          _activeBackendRide!.status == RideDispatchStatus.searching) {
+        _activeBackendRide = created;
+      }
+      if (cubit.state.rideStatus == RideBookingStatus.searching) {
+        _startRideSearchTimeout(created.rideId);
+      }
+      if (mounted) setState(() {});
     } catch (_) {
       if (!mounted) return;
       cubit.setRideStatus(RideBookingStatus.idle);
@@ -1614,9 +1636,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   void _cancelRide() {
     _rideSimulationTimer?.cancel();
+    _rideSearchTimeout?.cancel();
+    _rideSearchTimeout = null;
+    _searchTimeoutRideId = null;
     final active = _activeBackendRide;
     _activeBackendRide = null;
     if (active != null) {
+      _closedRideIds.add(active.rideId);
       unawaited(
         RideBackendService.instance
             .updateRideStatus(
@@ -1628,6 +1654,49 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
     context.read<RideCubit>().setRideStatus(RideBookingStatus.idle);
   }
+
+  void _startRideSearchTimeout(String rideId) {
+    if (_searchTimeoutRideId == rideId &&
+        _rideSearchTimeout?.isActive == true) {
+      return;
+    }
+    _rideSearchTimeout?.cancel();
+    _searchTimeoutRideId = rideId;
+    _rideSearchTimeout = Timer(const Duration(seconds: 45), () async {
+      _rideSearchTimeout = null;
+      _searchTimeoutRideId = null;
+      final cubit = context.read<RideCubit>();
+      if (!mounted ||
+          cubit.state.rideStatus != RideBookingStatus.searching ||
+          _activeBackendRide?.rideId != rideId) {
+        return;
+      }
+      final active = _activeBackendRide!;
+      _closedRideIds.add(rideId);
+      try {
+        await RideBackendService.instance.updateRideStatus(
+          request: active,
+          nextStatus: RideDispatchStatus.cancelled,
+        );
+      } catch (_) {
+        // Keep the passenger informed even if the server cannot be reached.
+      }
+      if (!mounted) return;
+      if (cubit.state.rideStatus == RideBookingStatus.searching ||
+          cubit.state.rideStatus == RideBookingStatus.idle) {
+        _activeBackendRide = null;
+        cubit.setRideStatus(RideBookingStatus.noCaptainAvailable);
+      }
+    });
+  }
+
+  void _returnFromNoCaptain() {
+    _activeBackendRide = null;
+    context.read<RideCubit>().setRideStatus(RideBookingStatus.idle);
+  }
+
+  int _visibleRidePrice(RideCubit cubit) =>
+      _activeBackendRide?.fareIqd ?? cubit.currentPrice;
 
   Future<void> _launchDriverContact(String scheme) async {
     final phone = context.read<RideCubit>().state.driverPhone.trim();
@@ -1759,12 +1828,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   LatLng _centerPinPoint(BuildContext context) {
     if (!_mapReady) return _mapCenterTemp ?? const LatLng(32.5050, 45.8230);
-    final size = MediaQuery.sizeOf(context);
-    final pinScreenOffset = Offset(
-      size.width / 2,
-      (size.height - _bottomPanelHeight) / 2,
+    final mapRenderObject =
+        _mapViewportKey.currentContext?.findRenderObject();
+    final pinRenderObject = _pickerPinKey.currentContext?.findRenderObject();
+    if (mapRenderObject is! RenderBox ||
+        !mapRenderObject.hasSize ||
+        pinRenderObject is! RenderBox ||
+        !pinRenderObject.hasSize) {
+      return _map.camera.center;
+    }
+    final pinTipOnScreen = pinRenderObject.localToGlobal(
+      Offset(pinRenderObject.size.width / 2, pinRenderObject.size.height),
     );
-    return _map.camera.screenOffsetToLatLng(pinScreenOffset);
+    final pinTipInMap = mapRenderObject.globalToLocal(pinTipOnScreen);
+    return _map.camera.screenOffsetToLatLng(pinTipInMap);
   }
 
   @override
@@ -1800,6 +1877,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         children: [
           // 1. Full Screen Interactive Map
           FlutterMap(
+            key: _mapViewportKey,
             mapController: _map,
             options: MapOptions(
               initialCenter: center,
@@ -2105,6 +2183,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             ],
                             Icon(
                               Icons.location_on,
+                              key: _pickerPinKey,
                               size: 42,
                               color: _pickingMode == 'origin'
                                   ? const Color(0xFFE56A2B)
@@ -2428,6 +2507,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     RideState state,
     RideCubit cubit,
   ) {
+    if (state.rideStatus == RideBookingStatus.noCaptainAvailable) {
+      return _buildNoCaptainSheet(state);
+    }
     if (state.rideStatus == RideBookingStatus.searching) {
       return _buildSearchingSheet(state);
     } else if (state.rideStatus == RideBookingStatus.driverAssigned ||
@@ -2464,9 +2546,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ),
       child: SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-          child: Column(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.72,
+          ),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               // Top Tabs: بوكس | تكسي (Image 3)
@@ -2716,7 +2803,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ),
                 ),
               ),
-            ],
+              ],
+              ),
+            ),
           ),
         ),
       ),
@@ -2773,7 +2862,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               ? 'الكابتن في الطريق إليك'
                               : state.origin != null &&
                                     state.destination != null
-                              ? 'السعر الحالي: ${formatIraqiDinar(cubit.currentPrice)}'
+                              ? 'السعر الحالي: ${formatIraqiDinar(_visibleRidePrice(cubit))}'
                               : 'حدد نقطة الانطلاق والوصول',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -2929,10 +3018,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     ),
     child: SafeArea(
       top: false,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.72,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
           Text(
             'أين تبدأ رحلتك؟',
             style: TextStyle(
@@ -2977,7 +3071,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               _mapCenterTemp = _map.camera.center;
             }),
           ),
-        ],
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: state.dark
+                    ? const Color(0xFF22322E)
+                    : const Color(0xFFF3F6F9),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                'أسعار البداية: توفير ${formatIraqiDinar(context.read<RideCubit>().priceForTier('saver'))} • بَلَس ${formatIraqiDinar(context.read<RideCubit>().priceForTier('plus'))}. يظهر السعر الدقيق بعد تحديد الموقعين.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: state.dark ? Colors.white70 : Colors.black54,
+                ),
+              ),
+            ),
+            ],
+          ),
+        ),
       ),
     ),
   );
@@ -3099,7 +3213,60 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   /// Searching Status Card
+  Widget _buildNoCaptainSheet(RideState state) => Container(
+    padding: const EdgeInsets.fromLTRB(22, 24, 22, 20),
+    decoration: BoxDecoration(
+      color: state.dark ? const Color(0xFF182522) : Colors.white,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+    ),
+    child: SafeArea(
+      top: false,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.local_taxi_outlined, size: 42, color: green),
+          const SizedBox(height: 10),
+          const Text(
+            'لم يتوفر كابتن لقبول الطلب حالياً',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'أوقفنا البحث بعد 45 ثانية. أعد المحاولة لاحقاً؛ سيظهر اسم الكابتن والسيارة ورقمها بعد قبول كابتن فعلي للرحلة.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              color: state.dark ? Colors.white70 : Colors.black54,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'الأجرة التقديرية: ${formatIraqiDinar(context.read<RideCubit>().currentPrice)}',
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 14),
+          FilledButton.icon(
+            onPressed: _returnFromNoCaptain,
+            icon: const Icon(Icons.refresh),
+            label: const Text('العودة وإعادة المحاولة'),
+          ),
+        ],
+      ),
+    ),
+  );
+
   Widget _buildSearchingSheet(RideState state) {
+    final tripDetails = <String>[
+      state.serviceCategory == 'taxi'
+          ? (state.selectedTier == 'plus' ? 'تكسي بَلَس' : 'تكسي توفير')
+          : 'بوكس درب',
+      if (state.promoCode != null && state.promoCode!.isNotEmpty)
+        'قسيمة ${state.promoCode} • خصم ${formatIraqiDinar(state.discountAmount)}',
+      if (state.secondDestination != null) 'محطة إضافية',
+      if (state.stopWaitMinutes > 0) 'انتظار ${state.stopWaitMinutes} دقيقة',
+      if (state.roundTrip) 'ذهاب وعودة',
+    ].join('  •  ');
     return Container(
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
@@ -3178,7 +3345,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    formatIraqiDinar(context.read<RideCubit>().currentPrice),
+                    formatIraqiDinar(
+                      _visibleRidePrice(context.read<RideCubit>()),
+                    ),
                     style: const TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w900,
@@ -3186,6 +3355,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     ),
                   ),
                 ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              tripDetails,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: state.dark ? Colors.white70 : Colors.black54,
               ),
             ),
             const SizedBox(height: 16),
@@ -3271,7 +3450,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ),
                 const Spacer(),
                 Text(
-                  formatIraqiDinar(context.read<RideCubit>().currentPrice),
+                  formatIraqiDinar(
+                    _visibleRidePrice(context.read<RideCubit>()),
+                  ),
                   style: TextStyle(
                     fontWeight: FontWeight.w900,
                     fontSize: 16,

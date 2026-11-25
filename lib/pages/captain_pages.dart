@@ -951,10 +951,18 @@ class _CaptainHomePageState extends State<CaptainHomePage>
   }
 
   Future<void> _openNavigation(LatLng target) async {
-    final uri = Uri.parse(
-      'https://www.google.com/maps/dir/?api=1&destination=${target.latitude},${target.longitude}&travelmode=driving',
-    );
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final coordinates = '${target.latitude},${target.longitude}';
+    final uri = Uri.https('www.google.com', '/maps/dir/', {
+      'api': '1',
+      'destination': coordinates,
+      'travelmode': 'driving',
+    });
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر فتح تطبيق الملاحة. تحقق من الاتصال وحاول مجدداً.')),
+      );
+    }
   }
 
   @override
