@@ -3,6 +3,7 @@ import 'package:car/models/ride_models.dart';
 import 'package:car/pages/captain_pages.dart';
 import 'package:car/pages/safety_page.dart';
 import 'package:car/services/captain_navigation_service.dart';
+import 'package:car/services/iraqi_navigation_service.dart';
 import 'package:car/services/ride_backend_service.dart';
 import 'package:car/widgets/darb_components.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -525,5 +526,20 @@ void main() {
       route: routes[0],
     );
     expect(offRoute.isOffRoute, isTrue);
+  });
+
+  test('IraqiNavigationService preserves exact coordinates without PII and persists preference', () async {
+    SharedPreferences.setMockInitialValues({});
+    const destLat = 32.51842319;
+    const destLng = 45.83619482;
+
+    final geoUri = IraqiNavigationService.buildExactGeoUri(destLat, destLng);
+    expect(geoUri, 'geo:32.51842319,45.83619482?q=32.51842319,45.83619482');
+    expect(IraqiNavigationService.packageFor(IraqiNavApp.dahliz), 'com.ms.jaber.wain');
+    expect(IraqiNavigationService.packageFor(IraqiNavApp.darbuna), 'iq.darbuna.app');
+
+    expect(await IraqiNavigationService.loadPreferredNavApp(), IraqiNavApp.ask);
+    await IraqiNavigationService.savePreferredNavApp(IraqiNavApp.darbuna);
+    expect(await IraqiNavigationService.loadPreferredNavApp(), IraqiNavApp.darbuna);
   });
 }

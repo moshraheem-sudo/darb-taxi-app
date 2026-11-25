@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/ride_models.dart';
 import '../services/captain_navigation_service.dart';
+import '../services/iraqi_navigation_service.dart';
 import '../services/location_service.dart';
 import '../services/notification_center.dart';
 import '../services/ride_backend_service.dart';
@@ -60,6 +61,7 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
   double _remainingKm = 0;
   double _remainingMin = 0;
   RouteStepInstruction? _nextInstruction;
+  String? _navPromptShownForRideId;
 
   StreamSubscription<UserLocation>? _gpsSub;
   StreamSubscription<RideRequestPayload>? _reqSub;
@@ -515,6 +517,7 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
           _navigationActive = false;
           _offRoute = false;
           _nextInstruction = null;
+          _navPromptShownForRideId = null;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -534,6 +537,7 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
           _navigationActive = false;
           _offRoute = false;
           _nextInstruction = null;
+          _navPromptShownForRideId = null;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم إلغاء الرحلة.')),
@@ -544,6 +548,13 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
       } else {
         setState(() => _activeRide = updated);
         await _loadRouteForRide(updated);
+        if (next == RideDispatchStatus.arrived &&
+            _navPromptShownForRideId != updated.rideId) {
+          _navPromptShownForRideId = updated.rideId;
+          if (mounted) {
+            await _showExternalNavChoiceDialog(updated);
+          }
+        }
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -609,6 +620,98 @@ class _CaptainHomePageState extends State<CaptainHomePage> {
       return;
     }
     await launchUrl(Uri(scheme: scheme, path: phone.trim()));
+  }
+
+  Future<void> _showExternalNavChoiceDialog(RideRequestPayload ride) async {
+    final darbunaInstalled =
+        await IraqiNavigationService.isAppInstalled(IraqiNavApp.darbuna);
+    final dahlizInstalled =
+        await IraqiNavigationService.isAppInstalled(IraqiNavApp.dahliz);
+    final preferred = await IraqiNavigationService.loadPreferredNavApp();
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('هل تريد متابعة الرحلة باستخدام تطبيق ملاحة خارجي؟'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'تُمرر إحداثيات الوجهة المسجلة فقط دون بيانات الزبون الشخصية.',
+              style: TextStyle(fontSize: 12.5, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            _ExternalNavOptionTile(
+              title: 'المتابعة عبر دربونة',
+              installed: darbunaInstalled,
+              isPreferred: preferred == IraqiNavApp.darbuna,
+              color: _captainBlue,
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _launchSelectedIraqiNav(IraqiNavApp.darbuna, ride);
+              },
+            ),
+            const SizedBox(height: 8),
+            _ExternalNavOptionTile(
+              title: 'المتابعة عبر دهليز',
+              installed: dahlizInstalled,
+              isPreferred: preferred == IraqiNavApp.dahliz,
+              color: _captainGreen,
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _launchSelectedIraqiNav(IraqiNavApp.dahliz, ride);
+              },
+            ),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(ctx),
+              style: FilledButton.styleFrom(
+                backgroundColor: _captainGreen,
+                minimumSize: const Size.fromHeight(46),
+              ),
+              icon: const Icon(Icons.map_outlined),
+              label: const Text('متابعة الرحلة داخل تطبيق درب'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _launchSelectedIraqiNav(
+    IraqiNavApp app,
+    RideRequestPayload ride,
+  ) async {
+    final res = await IraqiNavigationService.launchExternalNav(
+      app: app,
+      destLat: ride.destinationLat,
+      destLng: ride.destinationLng,
+    );
+    if (!mounted) return;
+    if (res == ExternalNavLaunchResult.notInstalled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('تطبيق ${IraqiNavigationService.labelFor(app)} غير مثبت على الجهاز.'),
+          action: SnackBarAction(
+            label: 'المتجر',
+            onPressed: () => IraqiNavigationService.openStoreForApp(app),
+          ),
+        ),
+      );
+    } else if (res == ExternalNavLaunchResult.unsupportedGeo) {
+      final exactCoords = '${ride.destinationLat}, ${ride.destinationLng}';
+      await Clipboard.setData(ClipboardData(text: exactCoords));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'لا يدعم التطبيق تمرير الإحداثيات مباشرة؛ تم نسخ إحداثيات الوجهة الدقيقة ($exactCoords).',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _openNavigation(LatLng target) async {
@@ -1821,6 +1924,7 @@ class _CaptainOnboardingPageState extends State<CaptainOnboardingPage> {
 
   CaptainProfile _profile = const CaptainProfile();
   String _tier = 'saver';
+  IraqiNavApp _preferredNav = IraqiNavApp.ask;
   bool _loading = true;
   bool _saving = false;
 
@@ -1832,6 +1936,7 @@ class _CaptainOnboardingPageState extends State<CaptainOnboardingPage> {
 
   Future<void> _load() async {
     final p = await _backend.loadCaptainProfile();
+    final prefNav = await IraqiNavigationService.loadPreferredNavApp();
     if (!mounted) return;
     setState(() {
       _profile = p;
@@ -1841,6 +1946,7 @@ class _CaptainOnboardingPageState extends State<CaptainOnboardingPage> {
       _carColor.text = p.carColor;
       _plate.text = p.plateNumber;
       _tier = p.vehicleTier;
+      _preferredNav = prefNav;
       _loading = false;
     });
   }
@@ -2011,6 +2117,34 @@ class _CaptainOnboardingPageState extends State<CaptainOnboardingPage> {
                   ],
                   onChanged: (v) {
                     if (v != null) setState(() => _tier = v);
+                  },
+                ),
+                const SizedBox(height: 14),
+                DropdownButtonFormField<IraqiNavApp>(
+                  initialValue: _preferredNav,
+                  decoration: const InputDecoration(
+                    labelText: 'تطبيق الملاحة المفضل',
+                    prefixIcon: Icon(Icons.navigation_outlined),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: IraqiNavApp.ask,
+                      child: Text('السؤال في كل مرة'),
+                    ),
+                    DropdownMenuItem(
+                      value: IraqiNavApp.dahliz,
+                      child: Text('دهليز (Dahliz)'),
+                    ),
+                    DropdownMenuItem(
+                      value: IraqiNavApp.darbuna,
+                      child: Text('دربونة (Darbuna)'),
+                    ),
+                  ],
+                  onChanged: (v) async {
+                    if (v != null) {
+                      setState(() => _preferredNav = v);
+                      await IraqiNavigationService.savePreferredNavApp(v);
+                    }
                   },
                 ),
                 const SizedBox(height: 18),
@@ -2269,6 +2403,69 @@ class _CaptainHistoryPageState extends State<CaptainHistoryPage> {
                   ),
               ],
             ),
+    );
+  }
+}
+
+class _ExternalNavOptionTile extends StatelessWidget {
+  const _ExternalNavOptionTile({
+    required this.title,
+    required this.installed,
+    required this.isPreferred,
+    required this.color,
+    required this.onTap,
+  });
+
+  final String title;
+  final bool installed;
+  final bool isPreferred;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        side: BorderSide(color: isPreferred ? color : Colors.grey.shade400),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.navigation_outlined, color: color, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  installed ? 'مثبت على الجهاز' : 'غير مثبت (متاح عبر المتجر)',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: installed ? _captainGreen : Colors.grey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (isPreferred)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                'المفضل',
+                style: TextStyle(fontSize: 10.5, color: color, fontWeight: FontWeight.bold),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
