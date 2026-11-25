@@ -3968,9 +3968,16 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('حسابي')),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
+    body: SafeArea(
+      top: false,
+      child: ListView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          20,
+          20,
+          28 + MediaQuery.paddingOf(context).bottom,
+        ),
+        children: [
         Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
@@ -4080,7 +4087,8 @@ class _ProfilePageState extends State<ProfilePage> {
             passengerLoggedIn.value = false;
           },
         ),
-      ],
+        ],
+      ),
     ),
   );
 }
@@ -4262,7 +4270,6 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  final _apiController = TextEditingController();
   bool _notificationsEnabled = false;
   bool _loading = true;
 
@@ -4276,17 +4283,10 @@ class _SettingsPageState extends State<SettingsPage> {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     setState(() {
-      _apiController.text = prefs.getString('api_base_url') ?? '';
       _notificationsEnabled =
           prefs.getBool('darb_notifications_enabled') ?? false;
       _loading = false;
     });
-  }
-
-  @override
-  void dispose() {
-    _apiController.dispose();
-    super.dispose();
   }
 
   Future<void> _toggleNotifications(bool enabled) async {
@@ -4301,37 +4301,19 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _notificationsEnabled = enabled);
   }
 
-  Future<void> _saveApiUrl() async {
-    final value = _apiController.text.trim();
-    final uri = Uri.tryParse(value);
-    if (uri == null ||
-        !uri.hasAuthority ||
-        !(uri.scheme == 'https' || uri.scheme == 'http')) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('أدخل عنوان خادم صحيحاً يبدأ بـ https://'),
-        ),
-      );
-      return;
-    }
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      'api_base_url',
-      value.replaceFirst(RegExp(r'/+$'), ''),
-    );
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('حُفظ عنوان الخادم على هذا الجهاز.')),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('الإعدادات')),
-    body: ListView(
-      padding: const EdgeInsets.all(14),
-      children: [
+    body: SafeArea(
+      top: false,
+      child: ListView(
+        padding: EdgeInsets.fromLTRB(
+          14,
+          14,
+          14,
+          28 + MediaQuery.paddingOf(context).bottom,
+        ),
+        children: [
         SwitchListTile(
           value: context.watch<RideCubit>().state.dark,
           onChanged: (value) => context.read<RideCubit>().toggleTheme(),
@@ -4419,70 +4401,15 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
         ),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.history, color: green),
-            title: const Text('سجل الرحلات'),
-            subtitle: const Text('الرحلات المكتملة المحفوظة على هذا الجهاز'),
-            trailing: const Icon(Icons.chevron_left),
-            onTap: () => context.push('/history'),
-          ),
-        ),
+        const SizedBox(height: 10),
         SwitchListTile(
           value: _notificationsEnabled,
           onChanged: _loading ? null : _toggleNotifications,
           secondary: const Icon(Icons.notifications_active_outlined),
           title: const Text('إشعارات الجهاز'),
           subtitle: const Text(
-            'حالة الرحلة ورسائل خدمة الزبائن عند ورودها من الخادم',
+            'حالة الرحلة ورسائل خدمة الزبائن عند ورودها',
           ),
-        ),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.inbox_outlined, color: green),
-            title: const Text('مركز الإشعارات'),
-            subtitle: const Text('عرض الإشعارات والرسائل المحفوظة'),
-            trailing: const Icon(Icons.chevron_left),
-            onTap: () => context.push('/notifications'),
-          ),
-        ),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.support_agent, color: green),
-            title: const Text('مركز خدمة الزبائن'),
-            subtitle: const Text('الأسئلة والبلاغات ومتابعة الردود'),
-            trailing: const Icon(Icons.chevron_left),
-            onTap: () => context.push('/support'),
-          ),
-        ),
-        const SizedBox(height: 18),
-        Text('الاتصال بالخادم', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _apiController,
-          keyboardType: TextInputType.url,
-          textDirection: TextDirection.ltr,
-          decoration: const InputDecoration(
-            labelText: 'عنوان Backend',
-            hintText: 'https://api.example.com',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 8),
-        FilledButton.icon(
-          onPressed: _saveApiUrl,
-          icon: const Icon(Icons.save_outlined),
-          label: const Text('حفظ عنوان الخادم'),
-        ),
-        const ListTile(
-          leading: Icon(Icons.language),
-          title: Text('اللغة'),
-          subtitle: Text('العربية'),
-        ),
-        const ListTile(
-          leading: Icon(Icons.notifications_outlined),
-          title: Text('الإشعارات'),
-          subtitle: Text('تحتاج إلى ربط خدمة الإشعارات'),
         ),
         const ListTile(
           leading: Icon(Icons.privacy_tip_outlined),
@@ -4491,7 +4418,8 @@ class _SettingsPageState extends State<SettingsPage> {
             'جلسة الدخول آمنة؛ والوجهات المفضلة محفوظة محلياً على جهازك.',
           ),
         ),
-      ],
+        ],
+      ),
     ),
   );
 }
